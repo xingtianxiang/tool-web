@@ -1,0 +1,17 @@
+appId: com.txing.machining-dispatch
+productName: 加工件采购分发管理
+directories:
+  output: dist
+  buildResources: build
+files:
+  - out/**/*
+  - package.json
+  - '!**/*.map'
+asar: true
+win:
+  target:
+    - portable
+  artifactName: 加工件采购分发管理.${ext}
+portable:
+  artifactName: 加工件采购分发管理.exe
+compression: maximum

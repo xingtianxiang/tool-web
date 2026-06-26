@@ -1,0 +1,26 @@
+# 依赖(用 npm install 还原,不入库)
+node_modules/
+
+# 构建产物(可重新生成,体积大,不入库)
+out/
+dist/
+release/
+
+# 日志
+*.log
+npm-debug.log*
+yarn-error.log*
+
+# 运行期 / 本地数据(绝不入库)
+data/
+*.local
+.env
+.env.*
+
+# 操作系统 / 编辑器杂项
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp

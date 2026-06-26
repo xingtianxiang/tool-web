@@ -1,0 +1,29 @@
+{
+  "name": "machining-dispatch",
+  "version": "1.0.0",
+  "description": "加工件采购分发管理工具",
+  "author": "txing",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "dist": "electron-vite build && electron-builder --win portable"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^5.0.0",
+    "autoprefixer": "^10.5.2",
+    "electron": "^38.8.6",
+    "electron-builder": "^25.1.8",
+    "electron-vite": "^5.0.0",
+    "postcss": "^8.5.15",
+    "tailwindcss": "^3.4.0",
+    "vite": "^7.0.0"
+  },
+  "dependencies": {
+    "jszip": "^3.10.1",
+    "lucide-react": "^1.21.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
+  }
+}
