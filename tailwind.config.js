@@ -7,7 +7,8 @@ module.exports = {
   theme: {
     extend: {
       fontFamily: {
-        sans: ['"Microsoft YaHei"', '"PingFang SC"', 'system-ui', 'sans-serif']
+        sans: ['"Geist Sans"', '"Inter"', '"Microsoft YaHei"', '"PingFang SC"', 'system-ui', 'sans-serif'],
+        mono: ['"Geist Mono"', '"SFMono-Regular"', 'Consolas', 'monospace']
       }
     }
   },

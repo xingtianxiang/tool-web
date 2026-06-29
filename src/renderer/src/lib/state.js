@@ -1,30 +1,52 @@
-// Compute the state of a (part, vendor) cell from raw data.
-// kinds: 'none' (not assigned) | 'unsent' | 'sent' | 'stale'
-export function cellState(part, vendorId, sendLog, assignments) {
-  const assigned = assignments.some((a) => a.partId === part.id && a.vendorId === vendorId)
-  if (!assigned) return { kind: 'none' }
+// Effective version signature of an assembly (组合件). Must stay byte-identical
+// to assemblySignature in src/main/store.js and signatureOf in lib/api.js — it is
+// compared against the signature stored in sendLog to decide 已发 / 需重发.
+export function assemblySignature(assembly, compById) {
+  const members = (assembly.members || [])
+    .map((m) => `${m.componentId}:${(compById[m.componentId] || {}).rev ?? 'x'}`)
+    .sort()
+    .join(',')
+  return `${assembly.rev || 0}#${members}`
+}
 
-  let last = null
-  for (const e of sendLog) {
-    if (e.vendorId !== vendorId) continue
-    const it = (e.items || []).find((i) => i.partId === part.id)
-    if (it) last = it.rev != null ? it.rev : it.version
+// An assembly has something to send if it has its own assembly drawing, or any
+// member small-part that has at least one file.
+export function assemblyHasContent(assembly, compById) {
+  if ((assembly.assemblyFiles || []).length > 0) return true
+  return (assembly.members || []).some((m) => ((compById[m.componentId] || {}).files || []).length > 0)
+}
+
+function lastSentSig(sendLog, vendorId, assemblyId) {
+  let sig = null
+  for (const entry of sendLog) {
+    if (entry.vendorId !== vendorId) continue
+    const item = (entry.items || []).find((it) => it.assemblyId === assemblyId)
+    if (item && item.sig != null) sig = item.sig
   }
-  const cur = part.rev || 0
-  if (cur === 0) return { kind: 'nofile' }
-  if (last == null) return { kind: 'unsent', cur }
-  if (last === cur) return { kind: 'sent', cur, last }
-  return { kind: 'stale', cur, last }
+  return sig
+}
+
+// Compute the state of an (assembly, vendor) matrix cell.
+// kinds: 'none' (not assigned) | 'nocontent' (assigned but no drawings at all)
+//        | 'unsent' | 'sent' | 'stale'
+export function cellState(assembly, vendorId, sendLog, assignments, compById) {
+  const assigned = assignments.some((a) => a.assemblyId === assembly.id && a.vendorId === vendorId)
+  if (!assigned) return { kind: 'none' }
+  if (!assemblyHasContent(assembly, compById)) return { kind: 'nocontent' }
+  const last = lastSentSig(sendLog, vendorId, assembly.id)
+  if (last == null) return { kind: 'unsent' }
+  if (last === assemblySignature(assembly, compById)) return { kind: 'sent' }
+  return { kind: 'stale' }
 }
 
 // How many cells need attention for a vendor (stale = highest priority).
-export function vendorAlerts(vendorId, parts, sendLog, assignments) {
+export function vendorAlerts(vendorId, assemblies, sendLog, assignments, compById) {
   let stale = 0
   let unsent = 0
-  for (const p of parts) {
-    const s = cellState(p, vendorId, sendLog, assignments)
-    if (s.kind === 'stale') stale++
-    else if (s.kind === 'unsent') unsent++
+  for (const assembly of assemblies) {
+    const state = cellState(assembly, vendorId, sendLog, assignments, compById)
+    if (state.kind === 'stale') stale++
+    else if (state.kind === 'unsent') unsent++
   }
   return { stale, unsent }
 }

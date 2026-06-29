@@ -17,7 +17,7 @@ function createWindow() {
     minHeight: 640,
     autoHideMenuBar: true,
     title: '加工件采购分发管理',
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#ffffff',
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       sandbox: false,
@@ -47,20 +47,32 @@ function fileListText(files) {
 
 function buildRequirementsHtml(vendor, items) {
   const dateStr = new Date().toLocaleDateString('zh-CN')
-  const rows = items
-    .map(
-      (it, i) => `<tr>
-        <td>${i + 1}</td>
-        <td>${esc(it.code)}</td>
-        <td>${fileListText(it.files)}</td>
-        <td>${esc(it.requirements.material)}</td>
-        <td>${esc(it.requirements.qty)}</td>
-        <td>${esc(it.requirements.tolerance)}</td>
-        <td>${esc(it.requirements.surface)}</td>
-        <td>${esc(it.requirements.deadline)}</td>
-        <td>${esc(it.requirements.notes)}</td>
+  const totalComponents = items.reduce((sum, asm) => sum + (asm.members || []).length, 0)
+  let idx = 0
+  const sections = items
+    .map((asm) => {
+      const memberRows = (asm.members || [])
+        .map((m) => {
+          idx += 1
+          const r = m.requirements || {}
+          return `<tr>
+        <td>${idx}</td>
+        <td>${esc(m.code)}</td>
+        <td>${fileListText(m.files)}</td>
+        <td>${esc(r.material)}</td>
+        <td>${esc(r.qty)}</td>
+        <td>${esc(r.tolerance)}</td>
+        <td>${esc(r.surface)}</td>
+        <td>${esc(r.deadline)}</td>
+        <td>${esc(r.notes)}</td>
       </tr>`
-    )
+        })
+        .join('')
+      const drawing = asm.assemblyFiles && asm.assemblyFiles.length ? `装配图：${fileListText(asm.assemblyFiles)}` : '无装配图'
+      const notes = asm.notes ? ` ｜ 备注：${esc(asm.notes)}` : ''
+      const emptyRow = memberRows ? '' : '<tr><td colspan="9" style="color:#b00">（该组合件还没有小零件）</td></tr>'
+      return `<tr class="group"><td colspan="9">组合件：${esc(asm.code)}（${drawing}）${notes}</td></tr>${memberRows}${emptyRow}`
+    })
     .join('')
   return `<!doctype html><html><head><meta charset="utf-8"><style>
     body{font-family:"Microsoft YaHei","PingFang SC","SimSun",sans-serif;color:#111;padding:24px;}
@@ -69,16 +81,16 @@ function buildRequirementsHtml(vendor, items) {
     table{border-collapse:collapse;width:100%;font-size:12px;}
     th,td{border:1px solid #888;padding:6px 8px;text-align:left;vertical-align:top;word-break:break-word;}
     th{background:#eef2f7;}
-    tbody tr:nth-child(even){background:#fafafa;}
+    tr.group td{background:#dce7f5;font-weight:bold;}
   </style></head><body>
     <h1>加工需求单 — ${esc(vendor?.name || '')}</h1>
-    <div class="meta">生成日期:${dateStr} ｜ 共 ${items.length} 项</div>
+    <div class="meta">生成日期:${dateStr} ｜ ${items.length} 个组合件 / ${totalComponents} 个小零件</div>
     <table>
       <thead><tr>
-        <th>#</th><th>图号/名称</th><th>图纸文件</th><th>材料</th><th>数量</th>
+        <th>#</th><th>小零件</th><th>图纸文件</th><th>材料</th><th>数量</th>
         <th>公差</th><th>表面处理</th><th>交期</th><th>备注</th>
       </tr></thead>
-      <tbody>${rows}</tbody>
+      <tbody>${sections}</tbody>
     </table>
   </body></html>`
 }
@@ -87,11 +99,11 @@ function buildRequirementsHtml(vendor, items) {
 
 async function buildPackage(vendorId) {
   const preview = store.previewPackage(vendorId)
-  if (preview.count === 0) throw new Error('该厂商没有指派任何零件')
+  if (preview.count === 0) throw new Error('该厂商没有指派任何组合件')
   const withFiles = preview.items.filter((it) => it.hasFile)
-  if (withFiles.length === 0) throw new Error('指派的零件都还没有上传图纸')
+  if (withFiles.length === 0) throw new Error('指派的组合件都还没有任何图纸')
 
-  const files = withFiles.flatMap((it) => store.resolveCurrentFiles(it.partId))
+  const files = withFiles.flatMap((it) => store.resolveAssemblyFiles(it.assemblyId))
 
   const pdf = await packager.htmlToPdf(buildRequirementsHtml(preview.vendor, preview.items))
 
@@ -110,8 +122,8 @@ async function buildPackage(vendorId) {
 
   await packager.buildZip(outPath, files, [{ buffer: pdf, nameInZip: '需求单.pdf' }])
 
-  // auto-log the send with the exact revision packaged
-  const loggedItems = preview.items.map((it) => ({ partId: it.partId, rev: it.rev }))
+  // auto-log the send with the exact version signature packaged
+  const loggedItems = preview.items.map((it) => ({ assemblyId: it.assemblyId, sig: it.sig }))
   store.appendSendLog(vendorId, loggedItems, fileName)
 
   return {
@@ -132,19 +144,39 @@ function wrap(fn) {
 function registerIpc() {
   ipcMain.handle('state:get', wrap(() => store.getState()))
 
-  ipcMain.handle('part:add', wrap((payload) => store.addPart(payload)))
-  ipcMain.handle('part:update', wrap(({ id, fields }) => store.updatePart(id, fields)))
-  ipcMain.handle('part:delete', wrap((id) => store.deletePart(id)))
-  ipcMain.handle('part:addFile', wrap(({ partId, filename, bytes, label, note }) => store.addFile(partId, { filename, bytes, label, note })))
-  ipcMain.handle('part:replaceFile', wrap(({ partId, fileId, filename, bytes, note }) => store.replaceFile(partId, fileId, { filename, bytes, note })))
-  ipcMain.handle('part:updateFile', wrap(({ partId, fileId, label, note }) => store.updateFile(partId, fileId, { label, note })))
-  ipcMain.handle('part:deleteFile', wrap(({ partId, fileId }) => store.deleteFile(partId, fileId)))
+  ipcMain.handle('project:add', wrap((payload) => store.addProject(payload)))
+  ipcMain.handle('project:update', wrap(({ id, fields }) => store.updateProject(id, fields)))
+  ipcMain.handle('project:setActive', wrap((id) => store.setActiveProject(id)))
+  ipcMain.handle('project:archive', wrap((id) => store.archiveProject(id)))
+  ipcMain.handle('project:unarchive', wrap((id) => store.unarchiveProject(id)))
+  ipcMain.handle('project:delete', wrap((id) => store.deleteProject(id)))
+  ipcMain.handle('project:addVendors', wrap((vendorIds) => store.addProjectVendors(vendorIds)))
+  ipcMain.handle('project:removeVendor', wrap((vendorId) => store.removeProjectVendor(vendorId)))
+
+  ipcMain.handle('component:add', wrap((payload) => store.addComponent(payload)))
+  ipcMain.handle('component:update', wrap(({ id, fields }) => store.updateComponent(id, fields)))
+  ipcMain.handle('component:delete', wrap((id) => store.deleteComponent(id)))
+  ipcMain.handle('component:addFile', wrap(({ componentId, filename, bytes, label, note }) => store.addComponentFile(componentId, { filename, bytes, label, note })))
+  ipcMain.handle('component:replaceFile', wrap(({ componentId, fileId, filename, bytes, note }) => store.replaceComponentFile(componentId, fileId, { filename, bytes, note })))
+  ipcMain.handle('component:updateFile', wrap(({ componentId, fileId, label, note }) => store.updateComponentFile(componentId, fileId, { label, note })))
+  ipcMain.handle('component:deleteFile', wrap(({ componentId, fileId }) => store.deleteComponentFile(componentId, fileId)))
+
+  ipcMain.handle('assembly:add', wrap((payload) => store.addAssembly(payload)))
+  ipcMain.handle('assembly:update', wrap(({ id, fields }) => store.updateAssembly(id, fields)))
+  ipcMain.handle('assembly:delete', wrap((id) => store.deleteAssembly(id)))
+  ipcMain.handle('assembly:addMembers', wrap(({ assemblyId, componentIds }) => store.addAssemblyMembers(assemblyId, componentIds)))
+  ipcMain.handle('assembly:removeMember', wrap(({ assemblyId, componentId }) => store.removeAssemblyMember(assemblyId, componentId)))
+  ipcMain.handle('assembly:setMemberQty', wrap(({ assemblyId, componentId, qty }) => store.setMemberQty(assemblyId, componentId, qty)))
+  ipcMain.handle('assembly:addFile', wrap(({ assemblyId, filename, bytes, label, note }) => store.addAssemblyFile(assemblyId, { filename, bytes, label, note })))
+  ipcMain.handle('assembly:replaceFile', wrap(({ assemblyId, fileId, filename, bytes, note }) => store.replaceAssemblyFile(assemblyId, fileId, { filename, bytes, note })))
+  ipcMain.handle('assembly:updateFile', wrap(({ assemblyId, fileId, label, note }) => store.updateAssemblyFile(assemblyId, fileId, { label, note })))
+  ipcMain.handle('assembly:deleteFile', wrap(({ assemblyId, fileId }) => store.deleteAssemblyFile(assemblyId, fileId)))
 
   ipcMain.handle('vendor:add', wrap((payload) => store.addVendor(payload)))
   ipcMain.handle('vendor:update', wrap(({ id, fields }) => store.updateVendor(id, fields)))
   ipcMain.handle('vendor:delete', wrap((id) => store.deleteVendor(id)))
 
-  ipcMain.handle('assign:set', wrap(({ partId, vendorId, assigned }) => store.setAssignment(partId, vendorId, assigned)))
+  ipcMain.handle('assign:set', wrap(({ assemblyId, vendorId, assigned }) => store.setAssignment(assemblyId, vendorId, assigned)))
 
   ipcMain.handle('package:preview', wrap((vendorId) => store.previewPackage(vendorId)))
   ipcMain.handle('package:build', wrap((vendorId) => buildPackage(vendorId)))

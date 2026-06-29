@@ -2,6 +2,32 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  --geist-primary: #171717;
+  --geist-secondary: #4d4d4d;
+  --geist-background: #ffffff;
+  --geist-background-2: #fafafa;
+  --geist-gray-100: #f2f2f2;
+  --geist-gray-200: #ebebeb;
+  --geist-gray-300: #e6e6e6;
+  --geist-gray-400: #eaeaea;
+  --geist-gray-500: #c9c9c9;
+  --geist-gray-700: #8f8f8f;
+  --geist-gray-900: #4d4d4d;
+  --geist-gray-1000: #171717;
+  --geist-blue-100: #f0f7ff;
+  --geist-blue-200: #e9f4ff;
+  --geist-blue-700: #006bff;
+  --geist-red-100: #ffeeef;
+  --geist-red-800: #ea001d;
+  --geist-amber-100: #fff6de;
+  --geist-amber-800: #ff9300;
+  --geist-green-100: #ecfdec;
+  --geist-green-800: #279141;
+  --geist-shadow-card: 0 2px 2px rgba(0, 0, 0, 0.04);
+  --geist-shadow-popover: 0 1px 1px rgba(0, 0, 0, 0.02), 0 4px 8px -4px rgba(0, 0, 0, 0.04), 0 16px 24px -8px rgba(0, 0, 0, 0.06);
+}
+
 html,
 body,
 #root {
@@ -10,18 +36,264 @@ body,
 
 body {
   margin: 0;
-  background: #f8fafc;
-  color: #0f172a;
-  font-family: 'Microsoft YaHei', 'PingFang SC', system-ui, sans-serif;
+  background: var(--geist-background);
+  color: var(--geist-primary);
+  font-family: 'Geist Sans', 'Inter', 'Microsoft YaHei', 'PingFang SC', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
 }
 
-/* let the matrix scroll without the whole window jumping */
 * {
   -webkit-user-select: none;
   user-select: none;
 }
+
 input,
 textarea {
   -webkit-user-select: text;
   user-select: text;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px #ffffff, 0 0 0 4px var(--geist-blue-700);
+}
+
+@layer components {
+  .app-shell {
+    @apply flex h-full flex-col;
+    background: var(--geist-background);
+  }
+
+  .app-header {
+    @apply flex min-h-14 items-center gap-2 border-b px-4;
+    border-color: var(--geist-gray-200);
+    background: var(--geist-background);
+  }
+
+  .app-title {
+    @apply mr-4 whitespace-nowrap text-base font-semibold;
+    color: var(--geist-primary);
+    letter-spacing: -0.01em;
+  }
+
+  .nav-tab {
+    @apply inline-flex h-10 items-center gap-2 rounded-md px-3 text-sm font-medium transition;
+    color: var(--geist-gray-900);
+  }
+
+  .nav-tab:hover {
+    background: var(--geist-gray-100);
+    color: var(--geist-primary);
+  }
+
+  .nav-tab-active {
+    background: var(--geist-primary);
+    color: var(--geist-background);
+  }
+
+  .surface-toolbar {
+    @apply flex items-center justify-between border-b px-4 py-2;
+    border-color: var(--geist-gray-200);
+    background: var(--geist-background-2);
+  }
+
+  .project-bar {
+    @apply flex min-h-16 items-center justify-between gap-4 border-b px-4 py-3;
+    border-color: var(--geist-gray-200);
+    background: var(--geist-background);
+  }
+
+  .project-select {
+    @apply h-9 min-w-[280px] rounded-md border bg-white px-3 text-sm font-semibold outline-none transition;
+    border-color: rgba(0, 0, 0, 0.14);
+    color: var(--geist-primary);
+  }
+
+  .project-select:hover {
+    border-color: rgba(0, 0, 0, 0.24);
+  }
+
+  .project-canvas {
+    @apply flex h-full min-h-0 bg-white;
+  }
+
+  .project-rail {
+    @apply flex w-[292px] shrink-0 flex-col overflow-auto border-r p-4;
+    border-color: var(--geist-gray-200);
+    background: var(--geist-background-2);
+  }
+
+  .project-card {
+    @apply block w-full rounded-md border bg-white p-3 text-left transition;
+    border-color: var(--geist-gray-200);
+    box-shadow: var(--geist-shadow-card);
+  }
+
+  .project-card:hover {
+    border-color: var(--geist-gray-500);
+  }
+
+  .project-card-active {
+    border-color: var(--geist-primary);
+    box-shadow: 0 0 0 1px var(--geist-primary);
+  }
+
+  .panel {
+    @apply rounded-md border bg-white;
+    border-color: var(--geist-gray-200);
+    box-shadow: var(--geist-shadow-card);
+  }
+
+  .resizable-matrix-panel {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    min-width: min(680px, 100%);
+    min-height: 360px;
+    max-width: 100%;
+    max-height: 100%;
+    overflow: auto;
+    resize: both;
+  }
+
+  .resizable-matrix-panel::after {
+    content: '';
+    position: absolute;
+    right: 6px;
+    bottom: 6px;
+    width: 16px;
+    height: 16px;
+    pointer-events: none;
+    background:
+      linear-gradient(135deg, transparent 0 45%, var(--geist-gray-500) 45% 53%, transparent 53%),
+      linear-gradient(135deg, transparent 0 62%, var(--geist-gray-400) 62% 70%, transparent 70%);
+    opacity: 0.7;
+  }
+
+  .btn {
+    @apply inline-flex h-10 items-center justify-center gap-1.5 rounded-md px-3 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50;
+    border: 1px solid transparent;
+  }
+
+  .btn-primary {
+    background: var(--geist-primary);
+    color: var(--geist-background);
+  }
+
+  .btn-primary:hover {
+    background: #000000;
+  }
+
+  .btn-secondary {
+    background: var(--geist-background);
+    border-color: rgba(0, 0, 0, 0.14);
+    color: var(--geist-primary);
+  }
+
+  .btn-secondary:hover {
+    background: var(--geist-gray-100);
+  }
+
+  .btn-danger {
+    background: var(--geist-red-800);
+    color: #ffffff;
+  }
+
+  .btn-danger:hover {
+    background: #d8001b;
+  }
+
+  .btn-ghost {
+    background: transparent;
+    color: var(--geist-gray-900);
+  }
+
+  .btn-ghost:hover {
+    background: rgba(0, 0, 0, 0.05);
+    color: var(--geist-primary);
+  }
+
+  .icon-button {
+    @apply inline-flex h-8 w-8 items-center justify-center rounded-md transition;
+    color: var(--geist-gray-900);
+  }
+
+  .icon-button:hover {
+    background: var(--geist-gray-100);
+    color: var(--geist-primary);
+  }
+
+  .field-label {
+    @apply mb-1 block text-sm font-normal;
+    color: var(--geist-secondary);
+  }
+
+  .text-input {
+    @apply h-10 w-full rounded-md border bg-white px-3 text-sm outline-none transition;
+    border-color: rgba(0, 0, 0, 0.14);
+    color: var(--geist-primary);
+  }
+
+  .text-input:hover {
+    border-color: rgba(0, 0, 0, 0.21);
+  }
+
+  .muted-text {
+    color: var(--geist-gray-900);
+  }
+
+  .faint-text {
+    color: var(--geist-gray-700);
+  }
+
+  .status-pill {
+    @apply inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium;
+  }
+
+  .status-green {
+    background: var(--geist-green-100);
+    color: var(--geist-green-800);
+  }
+
+  .status-amber {
+    background: var(--geist-amber-100);
+    color: #aa4d00;
+  }
+
+  .status-red {
+    background: var(--geist-red-100);
+    color: var(--geist-red-800);
+  }
+
+  .status-gray {
+    background: var(--geist-gray-100);
+    color: var(--geist-gray-900);
+  }
+
+  .status-blue {
+    background: var(--geist-blue-100);
+    color: var(--geist-blue-700);
+  }
+
+  .data-table {
+    @apply border-separate border-spacing-0 text-sm;
+  }
+
+  .data-table th {
+    @apply font-semibold;
+    color: var(--geist-secondary);
+  }
+
+  .data-table td,
+  .data-table th {
+    border-color: var(--geist-gray-200);
+  }
 }
