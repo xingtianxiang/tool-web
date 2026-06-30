@@ -512,6 +512,23 @@ function createPreviewApi() {
     async exportBackup() {
       return { path: `${data.dataDir}\\backup\\backup_preview.zip` }
     },
+    async previewImport() {
+      return {
+        vendors: { toAdd: 0, toUpdate: 0, rows: [] },
+        components: { toAdd: 0, toUpdate: 0, rows: [] },
+        errors: ['预览模式：Excel 导入需在桌面应用中使用']
+      }
+    },
+    async applyImport() {
+      return {
+        vendors: { added: 0, updated: 0 },
+        components: { added: 0, updated: 0 },
+        errors: ['预览模式：Excel 导入需在桌面应用中使用']
+      }
+    },
+    async downloadImportTemplate() {
+      return { path: `${data.dataDir}\\导入模板.xlsx` }
+    },
     async reveal() {
       return true
     },
@@ -543,4 +560,20 @@ export async function addAssemblyFileFromFile(assemblyId, file, label, note) {
 export async function replaceAssemblyFileFromFile(assemblyId, fileId, file, note) {
   const bytes = new Uint8Array(await file.arrayBuffer())
   return api.replaceAssemblyFile(assemblyId, fileId, file.name, bytes, note)
+}
+
+// Import helpers: read one or more picked spreadsheet Files into a list of byte
+// arrays, then preview (dry run) or apply (commit) the merge.
+async function filesToBytesList(files) {
+  const list = []
+  for (const file of Array.from(files)) list.push(new Uint8Array(await file.arrayBuffer()))
+  return list
+}
+
+export async function previewImportFromFiles(files) {
+  return api.previewImport(await filesToBytesList(files))
+}
+
+export async function applyImportFromFiles(files) {
+  return api.applyImport(await filesToBytesList(files))
 }

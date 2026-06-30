@@ -1,9 +1,10 @@
 import React from 'react'
-import { Pencil, Plus, Trash2 } from 'lucide-react'
+import { Pencil, Plus, Trash2, Upload } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { api } from '../lib/api.js'
 import { vendorAlerts } from '../lib/state.js'
 import { Button, Field, Modal, TextInput } from '../ui.jsx'
+import ImportDialog from '../components/ImportDialog.jsx'
 
 function VendorModal({ open, onClose, onSave, initial }) {
   const [name, setName] = useState(initial?.name || '')
@@ -38,6 +39,7 @@ function VendorModal({ open, onClose, onSave, initial }) {
 
 export default function Vendors({ data, refresh, notify }) {
   const [editing, setEditing] = useState(null)
+  const [showImport, setShowImport] = useState(false)
   const compById = useMemo(() => Object.fromEntries((data.components || []).map((component) => [component.id, component])), [data.components])
 
   async function save(payload) {
@@ -65,7 +67,10 @@ export default function Vendors({ data, refresh, notify }) {
     <div className="flex h-full flex-col">
       <div className="surface-toolbar">
         <span className="text-sm muted-text">{data.vendors.length} 家厂商</span>
-        <Button variant="primary" onClick={() => setEditing({})}><Plus size={15} /> 新增厂商</Button>
+        <div className="flex gap-2">
+          <Button onClick={() => setShowImport(true)}><Upload size={15} /> 从 Excel 导入</Button>
+          <Button variant="primary" onClick={() => setEditing({})}><Plus size={15} /> 新增厂商</Button>
+        </div>
       </div>
       <div className="flex-1 overflow-auto bg-[var(--geist-background)] p-4">
         {data.vendors.length === 0 ? (
@@ -100,6 +105,7 @@ export default function Vendors({ data, refresh, notify }) {
       </div>
 
       <VendorModal open={!!editing} onClose={() => setEditing(null)} onSave={save} initial={editing && editing.id ? editing : null} />
+      <ImportDialog open={showImport} onClose={() => setShowImport(false)} onImported={refresh} notify={notify} />
     </div>
   )
 }

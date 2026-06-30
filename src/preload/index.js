@@ -61,6 +61,11 @@ const api = {
   chooseDataDir: () => ipcRenderer.invoke('settings:chooseDir'),
   exportBackup: () => ipcRenderer.invoke('backup:export'),
 
+  // ----- bulk import from Excel/CSV (bytesList = array of Uint8Array) -----
+  previewImport: (bytesList) => ipcRenderer.invoke('import:preview', bytesList),
+  applyImport: (bytesList) => ipcRenderer.invoke('import:apply', bytesList),
+  downloadImportTemplate: () => ipcRenderer.invoke('import:downloadTemplate'),
+
   reveal: (p) => ipcRenderer.invoke('shell:reveal', p),
   openPath: (p) => ipcRenderer.invoke('shell:openPath', p)
 }

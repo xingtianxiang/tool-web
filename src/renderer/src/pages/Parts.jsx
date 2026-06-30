@@ -9,6 +9,7 @@ import {
 } from '../lib/api.js'
 import { REQ_FIELDS } from '../lib/state.js'
 import { Button, Field, Modal, TextInput, usePrompt } from '../ui.jsx'
+import ImportDialog from '../components/ImportDialog.jsx'
 
 function absOf(dataDir, storedPath) {
   return dataDir + '\\' + String(storedPath).split('/').join('\\')
@@ -498,6 +499,7 @@ export default function Parts({ data, refresh, notify, projectReadOnly = false }
   const [tab, setTab] = useState('assemblies')
   const [editingComponent, setEditingComponent] = useState(null)
   const [editingAssembly, setEditingAssembly] = useState(null)
+  const [showImport, setShowImport] = useState(false)
   const [promptUI, prompt] = usePrompt()
 
   const components = data.components || []
@@ -553,7 +555,10 @@ export default function Parts({ data, refresh, notify, projectReadOnly = false }
         {tab === 'assemblies' ? (
           <Button variant="primary" onClick={() => setEditingAssembly({})} disabled={projectReadOnly}><Plus size={15} /> 新增组合件</Button>
         ) : (
-          <Button variant="primary" onClick={() => setEditingComponent({})}><Plus size={15} /> 新增小零件</Button>
+          <div className="flex gap-2">
+            <Button onClick={() => setShowImport(true)}><Upload size={15} /> 从 Excel 导入</Button>
+            <Button variant="primary" onClick={() => setEditingComponent({})}><Plus size={15} /> 新增小零件</Button>
+          </div>
         )}
       </div>
 
@@ -607,6 +612,7 @@ export default function Parts({ data, refresh, notify, projectReadOnly = false }
       {editingAssembly && (
         <AssemblyModal onClose={() => setEditingAssembly(null)} onSave={saveAssembly} initial={editingAssembly.id ? editingAssembly : null} />
       )}
+      <ImportDialog open={showImport} onClose={() => setShowImport(false)} onImported={refresh} notify={notify} />
       {promptUI}
     </div>
   )

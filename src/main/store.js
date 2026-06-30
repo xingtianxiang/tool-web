@@ -1,6 +1,7 @@
 import { app } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
+import * as XLSX from 'xlsx'
 
 function readJsonSafe(file, fallback) {
   try {
@@ -778,6 +779,221 @@ export function deleteVendor(id) {
   }
   persist()
   return true
+}
+
+// ---------- bulk import (Excel / CSV) ----------
+// Lets several people each fill a standard spreadsheet and have the operator
+// merge them in. We MERGE by key (vendor name / 图号): existing rows are updated,
+// new rows are created. Empty cells mean "leave unchanged" — we never blank an
+// existing spec or delete local entries. Reuses addVendor/updateVendor/
+// addComponent/updateComponent so the stored shape stays identical.
+
+const VENDOR_ALIASES = {
+  name: ['厂商名称', '厂商', '名称', 'name', 'vendor'],
+  contact: ['联系方式', '联系', '联系人', '备注', 'contact']
+}
+const COMPONENT_ALIASES = {
+  code: ['图号', '编号', '零件号', '图号/编号', 'code'],
+  material: ['材料', 'material'],
+  tolerance: ['公差', 'tolerance'],
+  surface: ['表面处理', '表面', 'surface'],
+  description: ['描述', '说明', 'description']
+}
+
+function cellStr(v) {
+  return v == null ? '' : String(v).trim()
+}
+
+// First non-empty cell in `row` whose (trimmed) header matches one of `aliases`.
+function fieldFrom(row, aliases) {
+  for (const key of Object.keys(row)) {
+    if (aliases.includes(String(key).trim())) {
+      const v = cellStr(row[key])
+      if (v) return v
+    }
+  }
+  return ''
+}
+
+function rowHasAnyValue(row) {
+  return Object.values(row).some((v) => cellStr(v))
+}
+
+function pruneEmpty(obj) {
+  const out = {}
+  for (const [k, v] of Object.entries(obj)) if (cellStr(v)) out[k] = v
+  return out
+}
+
+function sheetRows(wb, predicate) {
+  const name = wb.SheetNames.find((n) => predicate(String(n)))
+  if (!name) return null
+  return XLSX.utils.sheet_to_json(wb.Sheets[name], { defval: '' })
+}
+
+// Parse ONE workbook (bytes = Uint8Array/Buffer) into normalized vendor/component
+// rows. Keys are sanitize()d so they match what add* will store. Returns errors
+// for value-bearing rows that are missing their key column.
+export function parseImportWorkbook(bytes) {
+  const wb = XLSX.read(Buffer.from(bytes), { type: 'buffer' })
+  const vendors = []
+  const components = []
+  const errors = []
+
+  const vendorRows = sheetRows(wb, (n) => n.includes('厂商'))
+  if (vendorRows) {
+    vendorRows.forEach((row, i) => {
+      const name = fieldFrom(row, VENDOR_ALIASES.name)
+      if (!name) {
+        if (rowHasAnyValue(row)) errors.push(`「厂商」表第 ${i + 2} 行缺少厂商名称，已跳过`)
+        return
+      }
+      vendors.push({ name: sanitize(name), contact: fieldFrom(row, VENDOR_ALIASES.contact) })
+    })
+  }
+
+  const compRows = sheetRows(wb, (n) => n.includes('零件'))
+  if (compRows) {
+    compRows.forEach((row, i) => {
+      const code = fieldFrom(row, COMPONENT_ALIASES.code)
+      if (!code) {
+        if (rowHasAnyValue(row)) errors.push(`「小零件」表第 ${i + 2} 行缺少图号，已跳过`)
+        return
+      }
+      components.push({
+        code: sanitize(code),
+        requirements: {
+          material: fieldFrom(row, COMPONENT_ALIASES.material),
+          tolerance: fieldFrom(row, COMPONENT_ALIASES.tolerance),
+          surface: fieldFrom(row, COMPONENT_ALIASES.surface)
+        },
+        description: fieldFrom(row, COMPONENT_ALIASES.description)
+      })
+    })
+  }
+
+  if (!vendorRows && !compRows) {
+    errors.push('没找到「厂商」或「小零件」工作表。请用「下载导入模板」里的表头格式。')
+  }
+  return { vendors, components, errors }
+}
+
+// Merge several parsed workbooks by key; later files win on conflicts.
+function mergeParsed(parsedList) {
+  const vendorMap = new Map()
+  const componentMap = new Map()
+  const errors = []
+  const dupVendors = new Set()
+  const dupComponents = new Set()
+  for (const p of parsedList) {
+    errors.push(...p.errors)
+    for (const v of p.vendors) {
+      if (vendorMap.has(v.name)) dupVendors.add(v.name)
+      vendorMap.set(v.name, v)
+    }
+    for (const c of p.components) {
+      if (componentMap.has(c.code)) dupComponents.add(c.code)
+      componentMap.set(c.code, c)
+    }
+  }
+  if (dupVendors.size) errors.push(`厂商重复（取最后一条）：${[...dupVendors].join('、')}`)
+  if (dupComponents.size) errors.push(`图号重复（取最后一条）：${[...dupComponents].join('、')}`)
+  return { vendors: [...vendorMap.values()], components: [...componentMap.values()], errors }
+}
+
+function normalizeBytesList(bytesList) {
+  return (Array.isArray(bytesList) ? bytesList : [bytesList]).filter(Boolean)
+}
+
+// Dry run: classify each merged row as add/update vs current data. No writes.
+export function previewImport(bytesList) {
+  const merged = mergeParsed(normalizeBytesList(bytesList).map((b) => parseImportWorkbook(b)))
+  const d = getData()
+  const existingVendorNames = new Set(d.vendors.map((v) => v.name))
+  const existingCodes = new Set(d.components.map((c) => c.code))
+  const vendorRows = merged.vendors.map((v) => ({
+    name: v.name,
+    contact: v.contact,
+    action: existingVendorNames.has(v.name) ? 'update' : 'add'
+  }))
+  const componentRows = merged.components.map((c) => ({
+    code: c.code,
+    material: c.requirements.material,
+    tolerance: c.requirements.tolerance,
+    surface: c.requirements.surface,
+    description: c.description,
+    action: existingCodes.has(c.code) ? 'update' : 'add'
+  }))
+  return {
+    vendors: {
+      toAdd: vendorRows.filter((r) => r.action === 'add').length,
+      toUpdate: vendorRows.filter((r) => r.action === 'update').length,
+      rows: vendorRows
+    },
+    components: {
+      toAdd: componentRows.filter((r) => r.action === 'add').length,
+      toUpdate: componentRows.filter((r) => r.action === 'update').length,
+      rows: componentRows
+    },
+    errors: merged.errors
+  }
+}
+
+// Commit: re-parse (don't trust renderer-side edits) and upsert. Empty cells are
+// pruned so they never overwrite an existing value.
+export function applyImport(bytesList) {
+  const merged = mergeParsed(normalizeBytesList(bytesList).map((b) => parseImportWorkbook(b)))
+  const d = getData()
+  let vAdded = 0
+  let vUpdated = 0
+  let cAdded = 0
+  let cUpdated = 0
+  for (const v of merged.vendors) {
+    const existing = d.vendors.find((x) => x.name === v.name)
+    if (existing) {
+      updateVendor(existing.id, v.contact ? { contact: v.contact } : {})
+      vUpdated++
+    } else {
+      addVendor(v)
+      vAdded++
+    }
+  }
+  for (const c of merged.components) {
+    const requirements = pruneEmpty(c.requirements)
+    const existing = d.components.find((x) => x.code === c.code)
+    if (existing) {
+      const fields = {}
+      if (Object.keys(requirements).length) fields.requirements = requirements
+      if (c.description) fields.description = c.description
+      updateComponent(existing.id, fields)
+      cUpdated++
+    } else {
+      addComponent({ code: c.code, requirements, description: c.description })
+      cAdded++
+    }
+  }
+  return {
+    vendors: { added: vAdded, updated: vUpdated },
+    components: { added: cAdded, updated: cUpdated },
+    errors: merged.errors
+  }
+}
+
+// Write a blank 2-sheet template (厂商 / 小零件) with headers + one sample row.
+export function writeImportTemplate(outPath) {
+  const wb = XLSX.utils.book_new()
+  const vendorWs = XLSX.utils.aoa_to_sheet([
+    ['厂商名称', '联系方式'],
+    ['示例：甲精密', '微信 / 联系人 / 电话（选填）']
+  ])
+  const compWs = XLSX.utils.aoa_to_sheet([
+    ['图号', '材料', '公差', '表面处理', '描述'],
+    ['示例：ABC-001', '6061 铝', '±0.05', '阳极氧化', '仅自己看，不进需求单（选填）']
+  ])
+  XLSX.utils.book_append_sheet(wb, vendorWs, '厂商')
+  XLSX.utils.book_append_sheet(wb, compWs, '小零件')
+  XLSX.writeFile(wb, outPath)
+  return { path: outPath }
 }
 
 // ---------- assignments + packaging ----------

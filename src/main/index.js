@@ -203,6 +203,18 @@ function registerIpc() {
     return { path: r.path }
   })
 
+  ipcMain.handle('import:preview', wrap((bytesList) => store.previewImport(bytesList)))
+  ipcMain.handle('import:apply', wrap((bytesList) => store.applyImport(bytesList)))
+  ipcMain.handle('import:downloadTemplate', async () => {
+    const res = await dialog.showSaveDialog({
+      title: '保存导入模板',
+      defaultPath: path.join(app.getPath('documents'), '导入模板.xlsx'),
+      filters: [{ name: 'Excel 工作簿', extensions: ['xlsx'] }]
+    })
+    if (res.canceled || !res.filePath) return { canceled: true }
+    return store.writeImportTemplate(res.filePath)
+  })
+
   ipcMain.handle('shell:reveal', wrap((p) => shell.showItemInFolder(p)))
   ipcMain.handle('shell:openPath', wrap((p) => shell.openPath(p)))
 }

@@ -1,11 +1,13 @@
 import React from 'react'
-import { Archive, FolderCog, FolderOpen } from 'lucide-react'
+import { Archive, FileSpreadsheet, FolderCog, FolderOpen, Upload } from 'lucide-react'
 import { useState } from 'react'
 import { api } from '../lib/api.js'
 import { Button } from '../ui.jsx'
+import ImportDialog from '../components/ImportDialog.jsx'
 
 export default function Settings({ data, refresh, notify }) {
   const [busy, setBusy] = useState(false)
+  const [showImport, setShowImport] = useState(false)
 
   async function changeDir() {
     try {
@@ -46,6 +48,16 @@ export default function Settings({ data, refresh, notify }) {
         </div>
       </section>
 
+      <section className="panel mb-4 p-4">
+        <h3 className="mb-1 flex items-center gap-1.5 text-base font-semibold text-[var(--geist-primary)]"><FileSpreadsheet size={16} /> 数据导入</h3>
+        <p className="mb-3 text-sm muted-text">
+          多人各自用模板填好 Excel（厂商 / 小零件），发到一起后在这里一次导入。可同时选多份，按图号 / 厂商名自动合并——已有的更新、没有的新增，<b>不会删除</b>已有数据。
+        </p>
+        <div className="flex gap-2">
+          <Button onClick={() => setShowImport(true)}><Upload size={15} /> 从 Excel 导入</Button>
+        </div>
+      </section>
+
       <section className="panel p-4">
         <h3 className="mb-1 flex items-center gap-1.5 text-base font-semibold text-[var(--geist-primary)]"><Archive size={16} /> 备份</h3>
         <p className="mb-3 text-sm muted-text">把 data.json 和全部图纸打成一个备份 zip，存到数据文件夹下的 backup 目录。</p>
@@ -53,6 +65,8 @@ export default function Settings({ data, refresh, notify }) {
       </section>
 
       <p className="mt-6 text-center text-xs faint-text">加工件采购分发管理 / 本地离线 / 数据不出本机</p>
+
+      <ImportDialog open={showImport} onClose={() => setShowImport(false)} onImported={refresh} notify={notify} />
     </div>
   )
 }
