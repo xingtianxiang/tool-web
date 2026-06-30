@@ -51,6 +51,8 @@ const api = {
 
   setAssignment: (assemblyId, vendorId, assigned) =>
     ipcRenderer.invoke('assign:set', { assemblyId, vendorId, assigned }),
+  setAssignmentMeta: (assemblyId, vendorId, meta) =>
+    ipcRenderer.invoke('assign:setMeta', { assemblyId, vendorId, meta }),
 
   previewPackage: (vendorId) => ipcRenderer.invoke('package:preview', vendorId),
   buildPackage: (vendorId) => ipcRenderer.invoke('package:build', vendorId),

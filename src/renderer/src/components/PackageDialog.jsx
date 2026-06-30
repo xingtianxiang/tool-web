@@ -87,13 +87,20 @@ export default function PackageDialog({ vendorId, onClose, notify, refresh }) {
                       {item.assemblyFiles.length > 0 && <span className="status-pill status-gray ml-2">含装配图</span>}
                       {!item.hasFile && <span className="status-pill status-red ml-2">无图纸，不打入</span>}
                       <div className="mt-0.5 text-xs faint-text">{item.members.length} 个小零件 / {item.fileCount} 个图纸文件</div>
+                      {(item.deadline || item.note) && (
+                        <div className="mt-0.5 text-xs text-[var(--geist-blue-700)]">
+                          {item.deadline && <span>交期：{item.deadline}</span>}
+                          {item.deadline && item.note && <span> ｜ </span>}
+                          {item.note && <span>备注：{item.note}</span>}
+                        </div>
+                      )}
                     </div>
                     <span className={`status-pill shrink-0 ${status.cls}`}>{status.label}</span>
                   </div>
                   {item.members.length > 0 && (
                     <div className="mt-2 flex flex-col gap-0.5 border-t border-[var(--geist-gray-100)] pt-1.5 text-xs">
                       {item.members.map((m) => {
-                        const spec = [m.requirements.material, m.requirements.qty && `${m.requirements.qty} 件`].filter(Boolean).join(' · ')
+                        const spec = [m.qty && `× ${m.qty}`, m.requirements.material].filter(Boolean).join(' · ')
                         return (
                           <div key={m.componentId} className="flex items-center justify-between gap-2">
                             <span className="min-w-0 truncate text-[var(--geist-gray-900)]">

@@ -38,7 +38,8 @@ function createPreviewApi() {
       id: 'c-bolt',
       code: 'BOLT-M6 定位螺栓',
       rev: 1,
-      requirements: { material: '不锈钢304', qty: '40', tolerance: '', surface: '本色', deadline: '', notes: '通用件，多处复用' },
+      description: '通用标准件，多个组合件复用，库存常备',
+      requirements: { material: '不锈钢304', tolerance: '', surface: '本色' },
       files: [{ id: 'f-bolt', label: '图纸', filename: 'BOLT-M6.pdf', storedPath: 'drawings/components/c-bolt/f-bolt/BOLT-M6.pdf' }],
       archivedFiles: []
     },
@@ -95,10 +96,10 @@ function createPreviewApi() {
       }
     ],
     assignments: [
-      { assemblyId: 'a-fixture', vendorId: 'v-keda' },
-      { assemblyId: 'a-fixture', vendorId: 'v-hongyuan' },
-      { assemblyId: 'a-guard', vendorId: 'v-keda' },
-      { assemblyId: 'a-guard', vendorId: 'v-yida' }
+      { assemblyId: 'a-fixture', vendorId: 'v-keda', deadline: '2026-07-03', note: '焊缝打磨平整，装配面勿磕碰' },
+      { assemblyId: 'a-fixture', vendorId: 'v-hongyuan', deadline: '2026-07-06', note: '' },
+      { assemblyId: 'a-guard', vendorId: 'v-keda', deadline: '', note: '' },
+      { assemblyId: 'a-guard', vendorId: 'v-yida', deadline: '', note: '' }
     ],
     // keda got an OLD version of the fixture (c-plate was rev 2) -> 需重发.
     sendLog: [
@@ -300,13 +301,14 @@ function createPreviewApi() {
 
     // ----- components (global library) -----
     async addComponent(payload) {
-      const component = { id: uid('c'), code: payload.code, requirements: payload.requirements || {}, files: [], archivedFiles: [], rev: 0, createdAt: new Date().toISOString() }
+      const component = { id: uid('c'), code: payload.code, description: payload.description || '', requirements: payload.requirements || {}, files: [], archivedFiles: [], rev: 0, createdAt: new Date().toISOString() }
       data.components.push(component)
       return clone(component)
     },
     async updateComponent(id, fields) {
       const component = getComponent(id)
       if (fields.code != null) component.code = fields.code
+      if (fields.description != null) component.description = fields.description
       if (fields.requirements) component.requirements = { ...component.requirements, ...fields.requirements }
       return clone(component)
     },
@@ -434,21 +436,28 @@ function createPreviewApi() {
     async setAssignment(assemblyId, vendorId, assigned) {
       const project = currentProject()
       const exists = project.assignments.some((a) => a.assemblyId === assemblyId && a.vendorId === vendorId)
-      if (assigned && !exists) project.assignments.push({ assemblyId, vendorId })
+      if (assigned && !exists) project.assignments.push({ assemblyId, vendorId, deadline: '', note: '' })
       if (!assigned) project.assignments = project.assignments.filter((a) => !(a.assemblyId === assemblyId && a.vendorId === vendorId))
+      return true
+    },
+    async setAssignmentMeta(assemblyId, vendorId, meta) {
+      const assignment = currentProject().assignments.find((a) => a.assemblyId === assemblyId && a.vendorId === vendorId)
+      if (!assignment) throw new Error('该格子还没指派，先点格子指派再写打包备注')
+      if (meta.deadline != null) assignment.deadline = meta.deadline
+      if (meta.note != null) assignment.note = meta.note
       return true
     },
     async previewPackage(vendorId) {
       const vendor = getVendor(vendorId)
       const project = currentProject()
       const map = compMap()
-      const assemblyIds = project.assignments.filter((a) => a.vendorId === vendorId).map((a) => a.assemblyId)
-      const items = assemblyIds
-        .map((assemblyId) => {
-          const assembly = project.assemblies.find((a) => a.id === assemblyId)
+      const items = project.assignments
+        .filter((a) => a.vendorId === vendorId)
+        .map((assignment) => {
+          const assembly = project.assemblies.find((a) => a.id === assignment.assemblyId)
           if (!assembly) return null
           const sig = signatureOf(assembly, map)
-          const last = lastSentSig(vendorId, assemblyId)
+          const last = lastSentSig(vendorId, assembly.id)
           const assemblyFiles = (assembly.assemblyFiles || []).map((f) => ({ label: f.label, filename: f.filename }))
           const members = (assembly.members || []).map((m) => {
             const c = map.get(m.componentId)
@@ -467,6 +476,8 @@ function createPreviewApi() {
             assemblyId: assembly.id,
             code: assembly.code,
             notes: assembly.notes || '',
+            deadline: assignment.deadline || '',
+            note: assignment.note || '',
             assemblyFiles,
             members,
             fileCount,

@@ -92,39 +92,29 @@ function ProjectCard({ project, selected, onSelect, onRename, onDragStart, onDra
   )
 }
 
-function Cell({ state, onClick, disabled }) {
-  const base = `flex h-full min-h-16 w-full items-center justify-center gap-1.5 px-3 text-center text-xs leading-tight transition ${disabled ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'}`
-  if (state.kind === 'none') {
-    return (
-      <button onClick={onClick} disabled={disabled} className={`${base} text-[var(--geist-gray-700)] hover:bg-[var(--geist-background-2)] hover:text-[var(--geist-primary)]`} title="点击指派给该厂商">
-        <Minus size={13} />
-      </button>
-    )
-  }
-  if (state.kind === 'nocontent') {
-    return (
-      <button onClick={onClick} disabled={disabled} className={`${base} bg-white text-[var(--geist-red-800)] hover:bg-[var(--geist-red-100)]`} title="该组合件还没有任何图纸（装配图或小零件图纸），无法打包。点击可取消指派">
-        <AlertTriangle size={13} /> 无图纸
-      </button>
-    )
-  }
-  if (state.kind === 'sent') {
-    return (
-      <button onClick={onClick} disabled={disabled} className={`${base} bg-white text-[var(--geist-green-800)] hover:bg-[var(--geist-green-100)]`} title="已发送当前版本。点击可取消指派">
-        <CheckCircle2 size={13} /> 已发最新
-      </button>
-    )
-  }
-  if (state.kind === 'stale') {
-    return (
-      <button onClick={onClick} disabled={disabled} className={`${base} bg-white font-medium text-[#aa4d00] hover:bg-[var(--geist-amber-100)]`} title="装配图或某个小零件已更新，该厂商还拿着旧版。点击可取消指派">
-        <AlertTriangle size={13} /> 需重发
-      </button>
-    )
-  }
+const CELL_CONFIG = {
+  none: { cls: 'text-[var(--geist-gray-700)] hover:bg-[var(--geist-background-2)] hover:text-[var(--geist-primary)]', title: '点击指派给该厂商', icon: <Minus size={14} />, label: '' },
+  nocontent: { cls: 'bg-white text-[var(--geist-red-800)] hover:bg-[var(--geist-red-100)]', title: '该组合件还没有任何图纸（装配图或小零件图纸），无法打包。点击可取消指派', icon: <AlertTriangle size={13} />, label: '无图纸' },
+  sent: { cls: 'bg-white text-[var(--geist-green-800)] hover:bg-[var(--geist-green-100)]', title: '已发送当前版本。点击可取消指派', icon: <CheckCircle2 size={13} />, label: '已发最新' },
+  stale: { cls: 'bg-white font-medium text-[#aa4d00] hover:bg-[var(--geist-amber-100)]', title: '装配图或某个小零件已更新，该厂商还拿着旧版。点击可取消指派', icon: <AlertTriangle size={13} />, label: '需重发' },
+  unsent: { cls: 'bg-white text-[var(--geist-gray-900)] hover:bg-[var(--geist-gray-100)]', title: '已指派，尚未发送。点击可取消指派', icon: <Circle size={12} />, label: '未发送' }
+}
+
+function Cell({ state, meta, onClick, disabled }) {
+  const base = `flex h-full min-h-16 w-full flex-col items-center justify-center gap-1 px-2 py-1.5 text-center text-xs leading-tight transition ${disabled ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'}`
+  const c = CELL_CONFIG[state.kind] || CELL_CONFIG.unsent
+  const showMeta = state.kind !== 'none' && meta && (meta.deadline || meta.note)
   return (
-    <button onClick={onClick} disabled={disabled} className={`${base} bg-white text-[var(--geist-gray-900)] hover:bg-[var(--geist-gray-100)]`} title="已指派，尚未发送。点击可取消指派">
-      <Circle size={12} /> 未发送
+    <button onClick={onClick} disabled={disabled} className={`${base} ${c.cls}`} title={c.title}>
+      <span className="flex items-center gap-1">{c.icon}{c.label && <span>{c.label}</span>}</span>
+      {showMeta && (
+        <span
+          className="w-full truncate text-xs text-[var(--geist-blue-700)]"
+          title={`${meta.deadline ? '交期：' + meta.deadline : ''}${meta.note ? '  备注：' + meta.note : ''}`}
+        >
+          {[meta.deadline, meta.note].filter(Boolean).join(' · ')}
+        </span>
+      )}
     </button>
   )
 }
@@ -186,6 +176,34 @@ function VendorPickerModal({ available, onClose, onConfirm, onCreate }) {
   )
 }
 
+// Per-cell (组合件 × 厂商) 交期 + 打包备注. Each vendor can get a different
+// deadline/note; these print on that vendor's 需求单 next to the assembly.
+function CellMetaModal({ assemblyCode, vendorName, initial, onClose, onSave }) {
+  const [deadline, setDeadline] = useState(initial.deadline || '')
+  const [note, setNote] = useState(initial.note || '')
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`打包备注 / ${assemblyCode} → ${vendorName}`}
+      footer={
+        <>
+          <Button onClick={onClose}>取消</Button>
+          <Button variant="primary" onClick={() => onSave({ deadline, note })}>保存</Button>
+        </>
+      }
+    >
+      <Field label="交期" hint="点开日历选日期；留空表示不指定。会印在该厂商的需求单上">
+        <TextInput type="date" value={deadline} onChange={(e) => setDeadline(e.target.value)} autoFocus />
+      </Field>
+      <Field label="打包备注" hint="只给这家厂商看的说明，会印在需求单上">
+        <textarea className="text-input h-auto py-2" rows={3} value={note} onChange={(e) => setNote(e.target.value)} />
+      </Field>
+    </Modal>
+  )
+}
+
 export default function Dashboard({ data, refresh, notify, openPackage, goTo, projectReadOnly = false }) {
   const { assemblies, components, vendors, assignments, sendLog, currentProject } = data
   const activeProjects = useMemo(() => data.projects.filter((project) => project.status !== 'archived'), [data.projects])
@@ -193,6 +211,7 @@ export default function Dashboard({ data, refresh, notify, openPackage, goTo, pr
   const compById = useMemo(() => Object.fromEntries((components || []).map((component) => [component.id, component])), [components])
   const [promptUI, prompt] = usePrompt()
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [cellMeta, setCellMeta] = useState(null)
   const [draggingId, setDraggingId] = useState(null)
   const [dragOverZone, setDragOverZone] = useState(null)
 
@@ -255,6 +274,28 @@ export default function Dashboard({ data, refresh, notify, openPackage, goTo, pr
       await api.archiveProject(currentProject.id)
       await refresh()
       notify('项目已归档，已放入历史区', 'success')
+    } catch (error) {
+      notify(error.message, 'error')
+    }
+  }
+
+  function openCellMeta(assembly, vendor, assignment) {
+    setCellMeta({
+      assemblyId: assembly.id,
+      vendorId: vendor.id,
+      assemblyCode: assembly.code,
+      vendorName: vendor.name,
+      deadline: assignment.deadline || '',
+      note: assignment.note || ''
+    })
+  }
+
+  async function saveCellMeta({ deadline, note }) {
+    try {
+      await api.setAssignmentMeta(cellMeta.assemblyId, cellMeta.vendorId, { deadline, note })
+      setCellMeta(null)
+      await refresh()
+      notify('已保存打包备注', 'success')
     } catch (error) {
       notify(error.message, 'error')
     }
@@ -476,6 +517,7 @@ export default function Dashboard({ data, refresh, notify, openPackage, goTo, pr
                 <span className="flex items-center gap-1"><span className="h-3 w-3 rounded-sm border border-[#ffdc73] bg-[var(--geist-amber-100)]" /> 需重发</span>
                 <span className="flex items-center gap-1"><span className="h-3 w-3 rounded-sm border border-[var(--geist-gray-300)] bg-[var(--geist-gray-100)]" /> 未发送</span>
                 <span className="flex items-center gap-1"><Minus size={13} /> 未指派，点击格子指派</span>
+                <span className="flex items-center gap-1"><Pencil size={11} /> 已指派的格子悬停可写交期/打包备注</span>
               </div>
               <div className="flex items-center gap-3">
                 <span className="text-xs faint-text">{assemblies.length} 个组合件 / {projectVendors.length} 家厂商</span>
@@ -540,11 +582,24 @@ export default function Dashboard({ data, refresh, notify, openPackage, goTo, pr
                               {empty && <span className="text-[var(--geist-red-800)]"> · 无图纸</span>}
                             </div>
                           </th>
-                          {projectVendors.map((vendor) => (
-                            <td key={vendor.id} className="h-12 border-b border-r p-0">
-                              <Cell state={cellState(assembly, vendor.id, sendLog, assignments, compById)} onClick={() => toggle(assembly, vendor.id)} disabled={projectReadOnly} />
-                            </td>
-                          ))}
+                          {projectVendors.map((vendor) => {
+                            const assignment = assignments.find((a) => a.assemblyId === assembly.id && a.vendorId === vendor.id)
+                            return (
+                              <td key={vendor.id} className="group/cell relative h-12 border-b border-r p-0">
+                                <Cell state={cellState(assembly, vendor.id, sendLog, assignments, compById)} meta={assignment} onClick={() => toggle(assembly, vendor.id)} disabled={projectReadOnly} />
+                                {assignment && !projectReadOnly && (
+                                  <button
+                                    type="button"
+                                    className="absolute right-0.5 top-0.5 z-10 flex h-5 w-5 items-center justify-center rounded bg-white/70 text-[var(--geist-gray-700)] opacity-0 transition hover:bg-white hover:text-[var(--geist-primary)] group-hover/cell:opacity-100"
+                                    title="打包备注 / 交期"
+                                    onClick={(e) => { e.stopPropagation(); openCellMeta(assembly, vendor, assignment) }}
+                                  >
+                                    <Pencil size={11} />
+                                  </button>
+                                )}
+                              </td>
+                            )
+                          })}
                         </tr>
                       )
                     })}
@@ -561,6 +616,15 @@ export default function Dashboard({ data, refresh, notify, openPackage, goTo, pr
           onClose={() => setPickerOpen(false)}
           onConfirm={addVendorsToProject}
           onCreate={createAndAddVendor}
+        />
+      )}
+      {cellMeta && (
+        <CellMetaModal
+          assemblyCode={cellMeta.assemblyCode}
+          vendorName={cellMeta.vendorName}
+          initial={cellMeta}
+          onClose={() => setCellMeta(null)}
+          onSave={saveCellMeta}
         />
       )}
       {promptUI}

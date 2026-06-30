@@ -468,11 +468,12 @@ export function removeProjectVendor(vendorId) {
 
 // ---------- shared small-part library (components) ----------
 
-export function addComponent({ code, requirements }) {
+export function addComponent({ code, requirements, description }) {
   const d = getData()
   const component = {
     id: uid('c'),
     code: sanitize(code),
+    description: description || '', // internal-only note, never put on the 需求单 PDF
     requirements: requirements || {},
     files: [],
     archivedFiles: [],
@@ -487,6 +488,7 @@ export function addComponent({ code, requirements }) {
 export function updateComponent(id, fields) {
   const component = findComponent(id)
   if (fields.code != null) component.code = sanitize(fields.code)
+  if (fields.description != null) component.description = fields.description
   if (fields.requirements) component.requirements = { ...component.requirements, ...fields.requirements }
   persist()
   return component
@@ -784,10 +786,23 @@ export function setAssignment(assemblyId, vendorId, assigned) {
   const project = currentProject()
   ensureWritableProject(project)
   const exists = project.assignments.find((item) => item.assemblyId === assemblyId && item.vendorId === vendorId)
-  if (assigned && !exists) project.assignments.push({ assemblyId, vendorId })
+  if (assigned && !exists) project.assignments.push({ assemblyId, vendorId, deadline: '', note: '' })
   if (!assigned && exists) {
     project.assignments = project.assignments.filter((item) => !(item.assemblyId === assemblyId && item.vendorId === vendorId))
   }
+  persist()
+  return true
+}
+
+// Per-cell (组合件×厂商) 交期 + 打包备注 — printed on that vendor's 需求单 next to
+// the assembly, so each vendor can get a different deadline/note.
+export function setAssignmentMeta(assemblyId, vendorId, { deadline, note }) {
+  const project = currentProject()
+  ensureWritableProject(project)
+  const assignment = project.assignments.find((item) => item.assemblyId === assemblyId && item.vendorId === vendorId)
+  if (!assignment) throw new Error('该格子还没指派，先点格子指派再写打包备注')
+  if (deadline != null) assignment.deadline = deadline
+  if (note != null) assignment.note = note
   persist()
   return true
 }
@@ -808,13 +823,13 @@ export function previewPackage(vendorId) {
   const vendor = d.vendors.find((item) => item.id === vendorId)
   if (!vendor) throw new Error('厂商不存在')
   const compMap = compMapOf(d)
-  const assemblyIds = project.assignments.filter((item) => item.vendorId === vendorId).map((item) => item.assemblyId)
-  const items = assemblyIds
-    .map((assemblyId) => {
-      const assembly = (project.assemblies || []).find((item) => item.id === assemblyId)
+  const items = project.assignments
+    .filter((item) => item.vendorId === vendorId)
+    .map((assignment) => {
+      const assembly = (project.assemblies || []).find((item) => item.id === assignment.assemblyId)
       if (!assembly) return null
       const sig = assemblySignature(assembly, compMap)
-      const last = lastSentSig(project, vendorId, assemblyId)
+      const last = lastSentSig(project, vendorId, assembly.id)
       const assemblyFiles = (assembly.assemblyFiles || []).map((file) => ({ label: file.label, filename: file.filename }))
       const members = (assembly.members || []).map((member) => {
         const component = compMap.get(member.componentId)
@@ -833,6 +848,8 @@ export function previewPackage(vendorId) {
         assemblyId: assembly.id,
         code: assembly.code,
         notes: assembly.notes || '',
+        deadline: assignment.deadline || '',
+        note: assignment.note || '',
         assemblyFiles,
         members,
         fileCount,

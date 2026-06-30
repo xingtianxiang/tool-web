@@ -8,10 +8,23 @@ files:
   - package.json
   - '!**/*.map'
 asar: true
+# Auto-update feed: the public GitHub repo's Releases. electron-updater reads
+# latest.yml from the newest release and downloads only the changed blocks
+# (differential update via .blockmap), so minor updates are a few MB, not 85.
+publish:
+  provider: github
+  owner: xingtianxiang
+  repo: tool-web
 win:
   target:
-    - portable
-  artifactName: 加工件采购分发管理.${ext}
-portable:
-  artifactName: 加工件采购分发管理.exe
+    - nsis
+  # ASCII installer filename keeps the auto-update download URL clean.
+  artifactName: machining-dispatch-Setup-${version}.${ext}
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: 加工件采购分发管理
 compression: maximum

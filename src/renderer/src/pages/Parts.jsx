@@ -108,10 +108,11 @@ function HistoryModal({ open, onClose, title, archived, dataDir }) {
 function ComponentModal({ onClose, onSave, initial }) {
   const [code, setCode] = useState(initial?.code || '')
   const [req, setReq] = useState(initial?.requirements || {})
+  const [description, setDescription] = useState(initial?.description || '')
 
   function save() {
     if (!code.trim()) return
-    onSave({ code: code.trim(), requirements: req })
+    onSave({ code: code.trim(), requirements: req, description })
   }
 
   return (
@@ -129,17 +130,16 @@ function ComponentModal({ onClose, onSave, initial }) {
       <Field label="图号 / 名称" hint="小零件的唯一标识，所有图纸和规格都挂在它下面，可被多个组合件复用">
         <TextInput value={code} onChange={(e) => setCode(e.target.value)} placeholder="如：BRK-A01 支撑板" autoFocus />
       </Field>
-      <div className="grid grid-cols-2 gap-x-4">
+      <div className="grid grid-cols-3 gap-x-4">
         {REQ_FIELDS.map((field) => (
           <Field key={field.key} label={field.label}>
-            {field.key === 'notes' ? (
-              <textarea className="text-input h-auto py-2" rows={2} value={req[field.key] || ''} onChange={(e) => setReq({ ...req, [field.key]: e.target.value })} />
-            ) : (
-              <TextInput value={req[field.key] || ''} onChange={(e) => setReq({ ...req, [field.key]: e.target.value })} />
-            )}
+            <TextInput value={req[field.key] || ''} onChange={(e) => setReq({ ...req, [field.key]: e.target.value })} />
           </Field>
         ))}
       </div>
+      <Field label="描述（仅内部查看，不进需求单 PDF）" hint="给自己人备注用，打包发给厂商的 PDF 不会包含这段">
+        <textarea className="text-input h-auto py-2" rows={2} value={description} onChange={(e) => setDescription(e.target.value)} />
+      </Field>
     </Modal>
   )
 }
@@ -176,7 +176,7 @@ function ComponentCard({ component, dataDir, usedCount, notify, refresh, onEdit,
     }
   }
 
-  const reqSummary = REQ_FIELDS.filter((field) => field.key !== 'notes' && component.requirements[field.key])
+  const reqSummary = REQ_FIELDS.filter((field) => component.requirements[field.key])
     .map((field) => `${field.label}: ${component.requirements[field.key]}`)
     .join(' / ')
   const files = component.files || []
@@ -208,6 +208,7 @@ function ComponentCard({ component, dataDir, usedCount, notify, refresh, onEdit,
       </div>
 
       {reqSummary && <div className="mt-2 line-clamp-1 text-xs muted-text" title={reqSummary}>{reqSummary}</div>}
+      {component.description && <div className="mt-1 line-clamp-2 text-xs faint-text" title={component.description}>描述：{component.description}</div>}
 
       {files.length > 0 && (
         <div className="mt-3 flex flex-col gap-1.5">

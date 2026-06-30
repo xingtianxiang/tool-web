@@ -51,11 +51,12 @@ export function vendorAlerts(vendorId, assemblies, sendLog, assignments, compByI
   return { stale, unsent }
 }
 
+// Spec fields kept on a small-part (component). These DO go onto the vendor 需求单
+// PDF. Quantity comes from the assembly member (member.qty), not the component, and
+// 交期/备注 were dropped per product decision. A component also has a free-text
+// `description` for internal use that is intentionally NOT in REQ_FIELDS (never on the PDF).
 export const REQ_FIELDS = [
   { key: 'material', label: '材料' },
-  { key: 'qty', label: '数量' },
   { key: 'tolerance', label: '公差' },
-  { key: 'surface', label: '表面处理' },
-  { key: 'deadline', label: '交期' },
-  { key: 'notes', label: '备注' }
+  { key: 'surface', label: '表面处理' }
 ]
