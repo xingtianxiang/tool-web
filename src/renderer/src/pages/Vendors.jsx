@@ -1,5 +1,5 @@
 import React from 'react'
-import { Package, Pencil, Plus, Trash2 } from 'lucide-react'
+import { Pencil, Plus, Trash2 } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { api } from '../lib/api.js'
 import { vendorAlerts } from '../lib/state.js'
@@ -36,7 +36,7 @@ function VendorModal({ open, onClose, onSave, initial }) {
   )
 }
 
-export default function Vendors({ data, refresh, notify, openPackage }) {
+export default function Vendors({ data, refresh, notify }) {
   const [editing, setEditing] = useState(null)
   const compById = useMemo(() => Object.fromEntries((data.components || []).map((component) => [component.id, component])), [data.components])
 
@@ -92,9 +92,6 @@ export default function Vendors({ data, refresh, notify, openPackage }) {
                     {alerts.stale > 0 && <span className="status-pill status-amber">{alerts.stale} 需重发</span>}
                     {alerts.unsent > 0 && <span className="status-pill status-gray">{alerts.unsent} 待发</span>}
                   </div>
-                  <Button variant="primary" className="mt-3 w-full" onClick={() => openPackage(vendor.id)}>
-                    <Package size={14} /> 打包发送
-                  </Button>
                 </div>
               )
             })}
