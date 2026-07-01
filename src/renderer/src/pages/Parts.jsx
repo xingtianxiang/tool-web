@@ -295,10 +295,11 @@ function ComponentPickerModal({ available, onClose, onConfirm, onCreate }) {
 function AssemblyModal({ onClose, onSave, initial }) {
   const [code, setCode] = useState(initial?.code || '')
   const [notes, setNotes] = useState(initial?.notes || '')
+  const [buildQty, setBuildQty] = useState(initial?.buildQty ?? 1)
 
   function save() {
     if (!code.trim()) return
-    onSave({ code: code.trim(), notes })
+    onSave({ code: code.trim(), notes, buildQty: Math.max(1, Number(buildQty) || 1) })
   }
 
   return (
@@ -315,6 +316,9 @@ function AssemblyModal({ onClose, onSave, initial }) {
     >
       <Field label="组合件名称 / 图号" hint="一个大零件（装配体），里面装若干小零件，可有一张装配图">
         <TextInput value={code} onChange={(e) => setCode(e.target.value)} placeholder="如：KLD-042 焊接工装总成" autoFocus />
+      </Field>
+      <Field label="套数" hint="这个项目要做几套（默认 1）；仓库缺口按 小零件数量 × 套数 计算">
+        <TextInput type="number" min={1} value={buildQty} onChange={(e) => setBuildQty(e.target.value)} className="w-32" />
       </Field>
       <Field label="整体备注" hint="选填，如整体工艺要求">
         <textarea className="text-input h-auto py-2" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
@@ -408,7 +412,7 @@ function AssemblyCard({ assembly, compById, components, dataDir, readOnly, notif
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="truncate font-semibold text-[var(--geist-primary)]">{assembly.code}</div>
-          <div className="text-xs faint-text">{members.length} 个小零件{drawings.length > 0 ? ' · 含装配图' : ''}</div>
+          <div className="text-xs faint-text">{members.length} 个小零件{drawings.length > 0 ? ' · 含装配图' : ''}{(assembly.buildQty ?? 1) > 1 ? ` · ×${assembly.buildQty} 套` : ''}</div>
         </div>
         <div className="flex gap-1">
           <Button variant="ghost" className="h-8 px-2" onClick={() => setHistory(true)} title="装配图历史"><History size={15} /></Button>

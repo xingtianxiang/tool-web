@@ -215,6 +215,13 @@ function registerIpc() {
     return store.writeImportTemplate(res.filePath)
   })
 
+  ipcMain.handle('stock:in', wrap(({ componentId, ...rest }) => store.stockIn(componentId, rest)))
+  ipcMain.handle('stock:allocate', wrap(({ componentId, projectId, ...rest }) => store.stockAllocate(componentId, projectId, rest)))
+  ipcMain.handle('stock:return', wrap(({ componentId, projectId, ...rest }) => store.stockReturn(componentId, projectId, rest)))
+  ipcMain.handle('stock:adjust', wrap(({ componentId, ...rest }) => store.stockAdjust(componentId, rest)))
+  ipcMain.handle('stock:setLocation', wrap(({ componentId, location }) => store.setComponentLocation(componentId, location)))
+  ipcMain.handle('stock:deleteMovement', wrap((id) => store.deleteMovement(id)))
+
   ipcMain.handle('shell:reveal', wrap((p) => shell.showItemInFolder(p)))
   ipcMain.handle('shell:openPath', wrap((p) => shell.openPath(p)))
 }

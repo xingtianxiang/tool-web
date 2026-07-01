@@ -66,6 +66,14 @@ const api = {
   applyImport: (bytesList) => ipcRenderer.invoke('import:apply', bytesList),
   downloadImportTemplate: () => ipcRenderer.invoke('import:downloadTemplate'),
 
+  // ----- inventory / warehouse -----
+  stockIn: (componentId, opts) => ipcRenderer.invoke('stock:in', { componentId, ...opts }),
+  stockAllocate: (componentId, projectId, opts) => ipcRenderer.invoke('stock:allocate', { componentId, projectId, ...opts }),
+  stockReturn: (componentId, projectId, opts) => ipcRenderer.invoke('stock:return', { componentId, projectId, ...opts }),
+  stockAdjust: (componentId, opts) => ipcRenderer.invoke('stock:adjust', { componentId, ...opts }),
+  setComponentLocation: (componentId, location) => ipcRenderer.invoke('stock:setLocation', { componentId, location }),
+  deleteMovement: (id) => ipcRenderer.invoke('stock:deleteMovement', id),
+
   reveal: (p) => ipcRenderer.invoke('shell:reveal', p),
   openPath: (p) => ipcRenderer.invoke('shell:openPath', p)
 }

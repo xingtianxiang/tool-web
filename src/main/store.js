@@ -73,7 +73,7 @@ export function backupDir() {
   return path.join(getDataDir(), 'backup')
 }
 
-const EMPTY = { schemaVersion: 5, activeProjectId: null, vendors: [], components: [], projects: [] }
+const EMPTY = { schemaVersion: 6, activeProjectId: null, vendors: [], components: [], movements: [], projects: [] }
 
 let data = null
 
@@ -204,6 +204,10 @@ function migrateData(d) {
     d.components = []
     changed = true
   }
+  if (!Array.isArray(d.movements)) {
+    d.movements = []
+    changed = true
+  }
   if (!Array.isArray(d.projects)) {
     const project = createProject('默认项目')
     project.parts = Array.isArray(d.parts) ? d.parts : []
@@ -262,8 +266,8 @@ function migrateData(d) {
     d.activeProjectId = (d.projects.find((project) => project.status === 'active') || d.projects[0]).id
     changed = true
   }
-  if (d.schemaVersion !== 5) {
-    d.schemaVersion = 5
+  if (d.schemaVersion !== 6) {
+    d.schemaVersion = 6
     changed = true
   }
   return changed
@@ -358,6 +362,7 @@ export function getState() {
     vendors: d.vendors,
     assignments: project.assignments,
     sendLog: project.sendLog,
+    inventory: computeInventory(d),
     dataDir: getDataDir()
   }
 }
@@ -563,7 +568,7 @@ export function deleteComponentFile(componentId, fileId) {
 
 // ---------- per-project assemblies (组合件, the matrix rows) ----------
 
-export function addAssembly({ code, notes }) {
+export function addAssembly({ code, notes, buildQty }) {
   const project = currentProject()
   ensureWritableProject(project)
   const assembly = {
@@ -573,6 +578,7 @@ export function addAssembly({ code, notes }) {
     archivedAssemblyFiles: [],
     members: [],
     notes: notes || '',
+    buildQty: Math.max(1, Number(buildQty) || 1),
     rev: 0,
     createdAt: new Date().toISOString()
   }
@@ -587,6 +593,7 @@ export function updateAssembly(id, fields) {
   const assembly = findAssembly(project, id)
   if (fields.code != null) assembly.code = sanitize(fields.code)
   if (fields.notes != null) assembly.notes = fields.notes
+  if (fields.buildQty != null) assembly.buildQty = Math.max(1, Number(fields.buildQty) || 1)
   persist()
   return assembly
 }
@@ -994,6 +1001,172 @@ export function writeImportTemplate(outPath) {
   XLSX.utils.book_append_sheet(wb, compWs, '小零件')
   XLSX.writeFile(wb, outPath)
   return { path: outPath }
+}
+
+// ---------- inventory / warehouse ----------
+// Physical stock is tracked at the small-part (component) level, since only
+// components actually arrive. Every quantity is DERIVED from an append-only
+// movements log, so numbers stay auditable and a mis-entry can just be deleted.
+//   in     : received. projectId null => shared pool; projectId set => received
+//            straight to that project (counts as its allocation, not pool).
+//   out    : allocated from the pool to a project.
+//   return : sent back from a project to the pool.
+//   adjust : stock-take correction (qty may be negative).
+
+function pushMovement(d, m) {
+  d.movements.push({ id: uid('m'), at: new Date().toISOString(), note: '', ...m })
+}
+
+function poolOnHandOf(d, componentId) {
+  let n = 0
+  for (const m of d.movements) {
+    if (m.componentId !== componentId) continue
+    if (m.type === 'in' && m.projectId == null) n += m.qty
+    else if (m.type === 'out') n -= m.qty
+    else if (m.type === 'return') n += m.qty
+    else if (m.type === 'adjust' && m.projectId == null) n += m.qty
+  }
+  return n
+}
+
+function allocatedOf(d, componentId, projectId) {
+  let n = 0
+  for (const m of d.movements) {
+    if (m.componentId !== componentId || m.projectId !== projectId) continue
+    if (m.type === 'in' || m.type === 'out' || m.type === 'adjust') n += m.qty
+    else if (m.type === 'return') n -= m.qty
+  }
+  return n
+}
+
+function qtyOrThrow(qty) {
+  const n = Number(qty)
+  if (!Number.isFinite(n) || n <= 0) throw new Error('数量必须是正数')
+  return n
+}
+
+export function stockIn(componentId, { qty, projectId = null, vendorId = null, location, note, photos } = {}) {
+  const d = getData()
+  const component = findComponent(componentId)
+  const n = qtyOrThrow(qty)
+  if (projectId != null && !d.projects.some((p) => p.id === projectId)) throw new Error('项目不存在')
+  if (location != null && location !== '') component.location = location
+  const id = uid('m')
+  // 入库凭证照片 (optional, one or more) stored like drawings under receipts/<movementId>/
+  const photoRefs = []
+  for (const ph of photos || []) {
+    if (!ph || !ph.bytes) continue
+    const fileId = uid('f')
+    const { filename, storedPath } = writeFileBytes(path.join('receipts', id), fileId, ph.filename, ph.bytes)
+    photoRefs.push({ id: fileId, filename, storedPath })
+  }
+  d.movements.push({ id, at: new Date().toISOString(), type: 'in', componentId, projectId: projectId || null, qty: n, vendorId: vendorId || null, note: note || '', photos: photoRefs })
+  persist()
+  return computeInventory(d)
+}
+
+export function stockAllocate(componentId, projectId, { qty, note } = {}) {
+  const d = getData()
+  findComponent(componentId)
+  if (!d.projects.some((p) => p.id === projectId)) throw new Error('项目不存在')
+  const n = qtyOrThrow(qty)
+  const pool = poolOnHandOf(d, componentId)
+  if (n > pool) throw new Error(`公共库存只有 ${pool} 个，不够分发 ${n} 个`)
+  pushMovement(d, { type: 'out', componentId, projectId, qty: n, note: note || '' })
+  persist()
+  return computeInventory(d)
+}
+
+export function stockReturn(componentId, projectId, { qty, note } = {}) {
+  const d = getData()
+  findComponent(componentId)
+  if (!d.projects.some((p) => p.id === projectId)) throw new Error('项目不存在')
+  const n = qtyOrThrow(qty)
+  const held = allocatedOf(d, componentId, projectId)
+  if (n > held) throw new Error(`该项目只领了 ${held} 个，不能回库 ${n} 个`)
+  pushMovement(d, { type: 'return', componentId, projectId, qty: n, note: note || '' })
+  persist()
+  return computeInventory(d)
+}
+
+export function stockAdjust(componentId, { qty, projectId = null, note } = {}) {
+  const d = getData()
+  findComponent(componentId)
+  const n = Number(qty)
+  if (!Number.isFinite(n) || n === 0) throw new Error('盘点数量必须是非零数字（可为负）')
+  if (projectId != null && !d.projects.some((p) => p.id === projectId)) throw new Error('项目不存在')
+  pushMovement(d, { type: 'adjust', componentId, projectId: projectId || null, qty: n, note: note || '' })
+  persist()
+  return computeInventory(d)
+}
+
+export function setComponentLocation(componentId, location) {
+  const component = findComponent(componentId)
+  component.location = location || ''
+  persist()
+  return component
+}
+
+export function deleteMovement(id) {
+  const d = getData()
+  const target = d.movements.find((m) => m.id === id)
+  if (!target) throw new Error('记录不存在')
+  removeFileDirs(target.photos)
+  d.movements = d.movements.filter((m) => m.id !== id)
+  persist()
+  return computeInventory(d)
+}
+
+// Per-project demand for a component = Σ over the project's assemblies of
+// (buildQty × member.qty). Drives the 缺口 view.
+function demandOf(project, componentId) {
+  let n = 0
+  for (const assembly of project.assemblies || []) {
+    const build = Math.max(1, Number(assembly.buildQty) || 1)
+    for (const m of assembly.members || []) {
+      if (m.componentId === componentId) n += build * (Number(m.qty) || 1)
+    }
+  }
+  return n
+}
+
+// Cross-project rollup consumed by the 仓库 page: pool balances + per-project
+// allocations, per-project demand gaps, and recent movements (newest first).
+function computeInventory(d) {
+  const projects = d.projects || []
+  const components = (d.components || []).map((c) => {
+    const poolOnHand = poolOnHandOf(d, c.id)
+    const allocations = projects
+      .map((p) => ({ projectId: p.id, projectName: p.name, allocated: allocatedOf(d, c.id, p.id) }))
+      .filter((a) => a.allocated !== 0)
+    const totalPhysical = poolOnHand + allocations.reduce((s, a) => s + a.allocated, 0)
+    return { id: c.id, code: c.code, description: c.description || '', location: c.location || '', poolOnHand, totalPhysical, allocations }
+  })
+  const projectNeeds = projects.map((p) => {
+    const seen = new Set()
+    const needs = []
+    for (const assembly of p.assemblies || []) {
+      for (const m of assembly.members || []) {
+        if (seen.has(m.componentId)) continue
+        seen.add(m.componentId)
+        const demand = demandOf(p, m.componentId)
+        if (demand === 0) continue
+        const comp = (d.components || []).find((c) => c.id === m.componentId)
+        const allocated = allocatedOf(d, m.componentId, p.id)
+        const poolOnHand = poolOnHandOf(d, m.componentId)
+        const gap = Math.max(0, demand - allocated)
+        needs.push({ componentId: m.componentId, code: comp ? comp.code : '(已删除)', demand, allocated, gap, poolOnHand, enough: gap === 0 || poolOnHand >= gap })
+      }
+    }
+    needs.sort((a, b) => b.gap - a.gap)
+    return { id: p.id, name: p.name, status: p.status, needs }
+  })
+  const movements = [...(d.movements || [])].reverse().slice(0, 200).map((m) => {
+    const comp = (d.components || []).find((c) => c.id === m.componentId)
+    const proj = projects.find((p) => p.id === m.projectId)
+    return { ...m, code: comp ? comp.code : '(已删除)', projectName: proj ? proj.name : null }
+  })
+  return { components, projects: projectNeeds, movements }
 }
 
 // ---------- assignments + packaging ----------

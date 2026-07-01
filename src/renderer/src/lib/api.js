@@ -39,6 +39,7 @@ function createPreviewApi() {
       code: 'BOLT-M6 定位螺栓',
       rev: 1,
       description: '通用标准件，多个组合件复用，库存常备',
+      location: 'B柜-3层',
       requirements: { material: '不锈钢304', tolerance: '', surface: '本色' },
       files: [{ id: 'f-bolt', label: '图纸', filename: 'BOLT-M6.pdf', storedPath: 'drawings/components/c-bolt/f-bolt/BOLT-M6.pdf' }],
       archivedFiles: []
@@ -73,6 +74,7 @@ function createPreviewApi() {
         id: 'a-fixture',
         code: 'KLD-042 焊接工装总成',
         rev: 1,
+        buildQty: 2,
         notes: '焊后整体退火',
         assemblyFiles: [{ id: 'af-1', label: '装配图', filename: 'KLD-042_ASM.pdf', storedPath: 'drawings/assemblies/a-fixture/af-1/KLD-042_ASM.pdf' }],
         archivedAssemblyFiles: [],
@@ -142,6 +144,11 @@ function createPreviewApi() {
     dataDir: 'D:\\Users\\txing\\machining-dispatch',
     activeProjectId: activeProject.id,
     components,
+    movements: [
+      { id: 'm-1', at: new Date().toISOString(), type: 'in', componentId: 'c-bolt', projectId: null, qty: 50, vendorId: 'v-keda', note: '首批到货' },
+      { id: 'm-2', at: new Date().toISOString(), type: 'out', componentId: 'c-bolt', projectId: 'proj-active', qty: 12, note: '' },
+      { id: 'm-3', at: new Date().toISOString(), type: 'in', componentId: 'c-plate', projectId: null, qty: 5, vendorId: null, note: '' }
+    ],
     projects: [activeProject, archivedProject],
     vendors: [
       { id: 'v-keda', name: '科达精密', contact: '张工 / 微信已备注' },
@@ -190,7 +197,8 @@ function createPreviewApi() {
       assemblies: project.assemblies,
       vendors: data.vendors,
       assignments: project.assignments,
-      sendLog: project.sendLog
+      sendLog: project.sendLog,
+      inventory: computeInventoryMock()
     }
   }
 
@@ -220,6 +228,72 @@ function createPreviewApi() {
       if (item && item.sig != null) sig = item.sig
     }
     return sig
+  }
+
+  // ----- inventory (mirrors src/main/store.js computeInventory) -----
+  function poolOnHandMock(cid) {
+    let n = 0
+    for (const m of data.movements) {
+      if (m.componentId !== cid) continue
+      if (m.type === 'in' && m.projectId == null) n += m.qty
+      else if (m.type === 'out') n -= m.qty
+      else if (m.type === 'return') n += m.qty
+      else if (m.type === 'adjust' && m.projectId == null) n += m.qty
+    }
+    return n
+  }
+  function allocatedMock(cid, pid) {
+    let n = 0
+    for (const m of data.movements) {
+      if (m.componentId !== cid || m.projectId !== pid) continue
+      if (m.type === 'in' || m.type === 'out' || m.type === 'adjust') n += m.qty
+      else if (m.type === 'return') n -= m.qty
+    }
+    return n
+  }
+  function demandMock(project, cid) {
+    let n = 0
+    for (const a of project.assemblies || []) {
+      const build = Math.max(1, Number(a.buildQty) || 1)
+      for (const m of a.members || []) if (m.componentId === cid) n += build * (Number(m.qty) || 1)
+    }
+    return n
+  }
+  function computeInventoryMock() {
+    const projects = data.projects || []
+    const comps = data.components.map((c) => {
+      const poolOnHand = poolOnHandMock(c.id)
+      const allocations = projects
+        .map((p) => ({ projectId: p.id, projectName: p.name, allocated: allocatedMock(c.id, p.id) }))
+        .filter((a) => a.allocated !== 0)
+      const totalPhysical = poolOnHand + allocations.reduce((s, a) => s + a.allocated, 0)
+      return { id: c.id, code: c.code, description: c.description || '', location: c.location || '', poolOnHand, totalPhysical, allocations }
+    })
+    const projectNeeds = projects.map((p) => {
+      const seen = new Set()
+      const needs = []
+      for (const a of p.assemblies || []) {
+        for (const m of a.members || []) {
+          if (seen.has(m.componentId)) continue
+          seen.add(m.componentId)
+          const demand = demandMock(p, m.componentId)
+          if (demand === 0) continue
+          const comp = data.components.find((c) => c.id === m.componentId)
+          const allocated = allocatedMock(m.componentId, p.id)
+          const poolOnHand = poolOnHandMock(m.componentId)
+          const gap = Math.max(0, demand - allocated)
+          needs.push({ componentId: m.componentId, code: comp ? comp.code : '(已删除)', demand, allocated, gap, poolOnHand, enough: gap === 0 || poolOnHand >= gap })
+        }
+      }
+      needs.sort((a, b) => b.gap - a.gap)
+      return { id: p.id, name: p.name, status: p.status, needs }
+    })
+    const movements = [...data.movements].reverse().slice(0, 200).map((m) => {
+      const comp = data.components.find((c) => c.id === m.componentId)
+      const proj = projects.find((p) => p.id === m.projectId)
+      return { ...m, code: comp ? comp.code : '(已删除)', projectName: proj ? proj.name : null }
+    })
+    return { components: comps, projects: projectNeeds, movements }
   }
 
   return {
@@ -353,7 +427,7 @@ function createPreviewApi() {
 
     // ----- assemblies (per-project) -----
     async addAssembly(payload) {
-      const assembly = { id: uid('a'), code: payload.code, assemblyFiles: [], archivedAssemblyFiles: [], members: [], notes: payload.notes || '', rev: 0, createdAt: new Date().toISOString() }
+      const assembly = { id: uid('a'), code: payload.code, assemblyFiles: [], archivedAssemblyFiles: [], members: [], notes: payload.notes || '', buildQty: Math.max(1, Number(payload.buildQty) || 1), rev: 0, createdAt: new Date().toISOString() }
       currentProject().assemblies.push(assembly)
       return clone(assembly)
     },
@@ -361,6 +435,7 @@ function createPreviewApi() {
       const assembly = getAssembly(id)
       if (fields.code != null) assembly.code = fields.code
       if (fields.notes != null) assembly.notes = fields.notes
+      if (fields.buildQty != null) assembly.buildQty = Math.max(1, Number(fields.buildQty) || 1)
       return clone(assembly)
     },
     async deleteAssembly(id) {
@@ -528,6 +603,48 @@ function createPreviewApi() {
     },
     async downloadImportTemplate() {
       return { path: `${data.dataDir}\\导入模板.xlsx` }
+    },
+    async stockIn(componentId, opts = {}) {
+      const c = getComponent(componentId)
+      const qty = Number(opts.qty)
+      if (!(qty > 0)) throw new Error('数量必须是正数')
+      if (opts.location) c.location = opts.location
+      const photos = (opts.photos || []).map((p) => ({ id: uid('f'), filename: p.filename, storedPath: `receipts/mock/${p.filename}` }))
+      data.movements.push({ id: uid('m'), at: new Date().toISOString(), type: 'in', componentId, projectId: opts.projectId || null, qty, vendorId: opts.vendorId || null, note: opts.note || '', photos })
+      return computeInventoryMock()
+    },
+    async stockAllocate(componentId, projectId, opts = {}) {
+      getComponent(componentId)
+      const qty = Number(opts.qty)
+      if (!(qty > 0)) throw new Error('数量必须是正数')
+      const pool = poolOnHandMock(componentId)
+      if (qty > pool) throw new Error(`公共库存只有 ${pool} 个，不够分发 ${qty} 个`)
+      data.movements.push({ id: uid('m'), at: new Date().toISOString(), type: 'out', componentId, projectId, qty, note: opts.note || '' })
+      return computeInventoryMock()
+    },
+    async stockReturn(componentId, projectId, opts = {}) {
+      getComponent(componentId)
+      const qty = Number(opts.qty)
+      if (!(qty > 0)) throw new Error('数量必须是正数')
+      const held = allocatedMock(componentId, projectId)
+      if (qty > held) throw new Error(`该项目只领了 ${held} 个，不能回库 ${qty} 个`)
+      data.movements.push({ id: uid('m'), at: new Date().toISOString(), type: 'return', componentId, projectId, qty, note: opts.note || '' })
+      return computeInventoryMock()
+    },
+    async stockAdjust(componentId, opts = {}) {
+      getComponent(componentId)
+      const qty = Number(opts.qty)
+      if (!Number.isFinite(qty) || qty === 0) throw new Error('盘点数量必须是非零数字（可为负）')
+      data.movements.push({ id: uid('m'), at: new Date().toISOString(), type: 'adjust', componentId, projectId: opts.projectId || null, qty, note: opts.note || '' })
+      return computeInventoryMock()
+    },
+    async setComponentLocation(componentId, location) {
+      getComponent(componentId).location = location || ''
+      return clone(getComponent(componentId))
+    },
+    async deleteMovement(id) {
+      data.movements = data.movements.filter((m) => m.id !== id)
+      return computeInventoryMock()
     },
     async reveal() {
       return true
