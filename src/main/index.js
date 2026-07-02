@@ -123,18 +123,20 @@ async function buildPackage(vendorId) {
     n++
   }
 
-  await packager.buildZip(outPath, files, [{ buffer: pdf, nameInZip: '需求单.pdf' }])
+  const zipResult = await packager.buildZip(outPath, files, [{ buffer: pdf, nameInZip: '需求单.pdf' }])
 
-  // auto-log the send with the exact version signature packaged
-  const loggedItems = preview.items.map((it) => ({ assemblyId: it.assemblyId, sig: it.sig }))
+  // auto-log the send with the exact version signature packaged — only the
+  // assemblies that actually went into the zip; skipped no-file ones stay unsent
+  const loggedItems = withFiles.map((it) => ({ assemblyId: it.assemblyId, sig: it.sig }))
   store.appendSendLog(vendorId, loggedItems, fileName)
 
   return {
     zipPath: outPath,
     fileName,
     count: withFiles.length,
-    fileCount: files.length,
-    missing: preview.count - withFiles.length
+    fileCount: files.length - zipResult.missing.length,
+    missing: preview.count - withFiles.length,
+    missingFiles: zipResult.missing
   }
 }
 
@@ -191,7 +193,7 @@ function registerIpc() {
       title: '选择数据文件夹',
       properties: ['openDirectory', 'createDirectory']
     })
-    if (res.canceled || !res.filePaths[0]) return { dataDir: store.getDataDir() }
+    if (res.canceled || !res.filePaths[0]) return { dataDir: store.getDataDir(), canceled: true }
     store.setDataDir(res.filePaths[0])
     return { dataDir: store.getDataDir() }
   })
@@ -221,6 +223,17 @@ function registerIpc() {
   ipcMain.handle('stock:adjust', wrap(({ componentId, ...rest }) => store.stockAdjust(componentId, rest)))
   ipcMain.handle('stock:setLocation', wrap(({ componentId, location }) => store.setComponentLocation(componentId, location)))
   ipcMain.handle('stock:deleteMovement', wrap((id) => store.deleteMovement(id)))
+
+  ipcMain.handle('report:projectUsage', wrap(({ projectId, from, to }) => store.projectUsageReport(projectId, { from, to })))
+  ipcMain.handle('report:exportUsage', async (_evt, { projectId, from, to }) => {
+    const res = await dialog.showSaveDialog({
+      title: '导出用料报表',
+      defaultPath: path.join(app.getPath('documents'), `用料报表_${new Date().toISOString().slice(0, 10)}.xlsx`),
+      filters: [{ name: 'Excel 工作簿', extensions: ['xlsx'] }]
+    })
+    if (res.canceled || !res.filePath) return { canceled: true }
+    return store.exportUsageReport(res.filePath, projectId, { from, to })
+  })
 
   ipcMain.handle('shell:reveal', wrap((p) => shell.showItemInFolder(p)))
   ipcMain.handle('shell:openPath', wrap((p) => shell.openPath(p)))
@@ -255,15 +268,28 @@ function setupAutoUpdate(win) {
 
 // ---------- lifecycle ----------
 
-app.whenReady().then(() => {
-  store.ensureData()
-  registerIpc()
-  const win = createWindow()
-  setupAutoUpdate(win)
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+// 双开会各自在内存里持有一份 data.json 并整份覆写,后保存的吞掉先保存的 —— 只允许一个实例
+if (!app.requestSingleInstanceLock()) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    const win = BrowserWindow.getAllWindows()[0]
+    if (win) {
+      if (win.isMinimized()) win.restore()
+      win.focus()
+    }
   })
-})
+
+  app.whenReady().then(() => {
+    store.ensureData()
+    registerIpc()
+    const win = createWindow()
+    setupAutoUpdate(win)
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    })
+  })
+}
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()

@@ -280,6 +280,16 @@ export function ensureData(reload = false) {
   if (data && !reload) return data
   data = readJsonSafe(dataFile(), null)
   if (!data) {
+    // data.json 存在但解析失败(损坏/半写):先留底再重建,绝不静默清空用户数据
+    if (fs.existsSync(dataFile())) {
+      const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')
+      try {
+        fs.copyFileSync(dataFile(), dataFile() + '.corrupt-' + stamp)
+        console.error('[store] data.json 解析失败,原文件已留底为 data.json.corrupt-' + stamp)
+      } catch {
+        /* ignore */
+      }
+    }
     data = JSON.parse(JSON.stringify(EMPTY))
     const project = createProject()
     data.projects.push(project)
@@ -430,6 +440,12 @@ export function deleteProject(id) {
   const d = getData()
   const index = d.projects.findIndex((item) => item.id === id)
   if (index < 0) throw new Error('项目不存在')
+  // 项目名下已领未还的零件自动回公共库存,否则这些数量会从库存里凭空消失
+  const touchedComponents = new Set(d.movements.filter((m) => m.projectId === id).map((m) => m.componentId))
+  for (const componentId of touchedComponents) {
+    const held = allocatedOf(d, componentId, id)
+    if (held > 0) pushMovement(d, { type: 'return', componentId, projectId: id, qty: held, note: '项目删除,自动回库' })
+  }
   const [removed] = d.projects.splice(index, 1)
   for (const assembly of removed.assemblies || []) {
     removeFileDirs([...(assembly.assemblyFiles || []), ...(assembly.archivedAssemblyFiles || [])])
@@ -855,6 +871,7 @@ export function parseImportWorkbook(bytes) {
         if (rowHasAnyValue(row)) errors.push(`「厂商」表第 ${i + 2} 行缺少厂商名称，已跳过`)
         return
       }
+      if (/^示例/.test(name)) return // 模板自带的示例行,不当真数据导入
       vendors.push({ name: sanitize(name), contact: fieldFrom(row, VENDOR_ALIASES.contact) })
     })
   }
@@ -867,6 +884,7 @@ export function parseImportWorkbook(bytes) {
         if (rowHasAnyValue(row)) errors.push(`「小零件」表第 ${i + 2} 行缺少图号，已跳过`)
         return
       }
+      if (/^示例/.test(code)) return // 模板自带的示例行,不当真数据导入
       components.push({
         code: sanitize(code),
         requirements: {
@@ -1111,8 +1129,16 @@ export function deleteMovement(id) {
   const d = getData()
   const target = d.movements.find((m) => m.id === id)
   if (!target) throw new Error('记录不存在')
+  // 先模拟撤销:任何余额会变负就拒绝,防止"入库已被分发出去,还撤销那条入库"的倒挂
+  const after = { movements: d.movements.filter((m) => m.id !== id) }
+  const pool = poolOnHandOf(after, target.componentId)
+  if (pool < 0) throw new Error(`不能撤销:撤销后公共库存会变成 ${pool}。请先撤销这条记录之后发生的分发`)
+  for (const project of d.projects) {
+    const held = allocatedOf(after, target.componentId, project.id)
+    if (held < 0) throw new Error(`不能撤销:撤销后「${project.name}」的已领数会变成 ${held}。请先撤销该项目更晚的相关记录`)
+  }
   removeFileDirs(target.photos)
-  d.movements = d.movements.filter((m) => m.id !== id)
+  d.movements = after.movements
   persist()
   return computeInventory(d)
 }
@@ -1164,9 +1190,116 @@ function computeInventory(d) {
   const movements = [...(d.movements || [])].reverse().slice(0, 200).map((m) => {
     const comp = (d.components || []).find((c) => c.id === m.componentId)
     const proj = projects.find((p) => p.id === m.projectId)
-    return { ...m, code: comp ? comp.code : '(已删除)', projectName: proj ? proj.name : null }
+    return { ...m, code: comp ? comp.code : '(已删除)', projectName: proj ? proj.name : m.projectId ? '(已删除项目)' : null }
   })
   return { components, projects: projectNeeds, movements }
+}
+
+// ---------- usage report (用料报表) ----------
+// A per-project, date-ranged rollup of parts usage, for 组会汇报 / 结算.
+// movement.at is a UTC ISO string, but the date range the user picks is in LOCAL
+// calendar days — so we bucket by the movement's LOCAL date, never by the raw
+// ISO prefix (that would be off by the timezone offset near midnight).
+// 领用 = 从公共库存分发到项目(out) + 直达入库到项目(in);回库 = return;
+// 盘点(adjust)不计入用料。净用料 = 领用 − 回库。
+
+function localDateStr(iso) {
+  const d = new Date(iso)
+  const p = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+}
+
+function localDateTimeStr(iso) {
+  const d = new Date(iso)
+  const p = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+}
+
+const USAGE_TYPE_LABEL = { out: '领用', in: '直达入库', return: '回库' }
+
+function computeUsageReport(d, projectId, from, to) {
+  const project = (d.projects || []).find((p) => p.id === projectId)
+  if (!project) throw new Error('项目不存在')
+  const compMap = compMapOf(d)
+  const inRange = (iso) => {
+    const ds = localDateStr(iso)
+    if (from && ds < from) return false
+    if (to && ds > to) return false
+    return true
+  }
+  const byComp = new Map()
+  const detail = []
+  for (const m of d.movements || []) {
+    if (m.projectId !== projectId) continue
+    if (m.type === 'adjust') continue
+    const isTake = m.type === 'out' || m.type === 'in'
+    const isReturn = m.type === 'return'
+    if (!isTake && !isReturn) continue
+    if (!inRange(m.at)) continue
+    const rec = byComp.get(m.componentId) || { taken: 0, returned: 0 }
+    if (isTake) rec.taken += m.qty
+    else rec.returned += m.qty
+    byComp.set(m.componentId, rec)
+    const comp = compMap.get(m.componentId)
+    detail.push({
+      at: m.at,
+      time: localDateTimeStr(m.at),
+      type: m.type,
+      typeLabel: USAGE_TYPE_LABEL[m.type] || m.type,
+      code: comp ? comp.code : '(已删除)',
+      qty: m.qty,
+      note: m.note || ''
+    })
+  }
+  const rows = [...byComp.entries()].map(([componentId, rec]) => {
+    const comp = compMap.get(componentId)
+    return {
+      componentId,
+      code: comp ? comp.code : '(已删除)',
+      description: comp ? comp.description || '' : '',
+      taken: rec.taken,
+      returned: rec.returned,
+      net: rec.taken - rec.returned
+    }
+  })
+  rows.sort((a, b) => b.net - a.net || a.code.localeCompare(b.code))
+  detail.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0))
+  return { project: { id: project.id, name: project.name, status: project.status }, from: from || '', to: to || '', rows, detail }
+}
+
+export function projectUsageReport(projectId, { from, to } = {}) {
+  return computeUsageReport(getData(), projectId, from || '', to || '')
+}
+
+export function exportUsageReport(outPath, projectId, { from, to } = {}) {
+  const rep = computeUsageReport(getData(), projectId, from || '', to || '')
+  const rangeLabel = rep.from || rep.to ? `${rep.from || '最早'} ~ ${rep.to || '至今'}` : '全部时间'
+  const wb = XLSX.utils.book_new()
+
+  const summaryAoa = [
+    [`项目：${rep.project.name}${rep.project.status === 'archived' ? '（历史）' : ''}`],
+    [`时间范围：${rangeLabel}`],
+    [`导出日期：${todayLabel()}`],
+    [],
+    ['图号', '描述', '期间领用', '期间回库', '净用料', '单位'],
+    ...rep.rows.map((r) => [r.code, r.description, r.taken, r.returned, r.net, '个'])
+  ]
+  if (rep.rows.length === 0) summaryAoa.push(['（该时间段内没有领用或回库记录）'])
+  const summaryWs = XLSX.utils.aoa_to_sheet(summaryAoa)
+  summaryWs['!cols'] = [{ wch: 22 }, { wch: 24 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 6 }]
+  XLSX.utils.book_append_sheet(wb, summaryWs, '用料汇总')
+
+  const detailAoa = [
+    ['时间', '类型', '图号', '数量', '备注'],
+    ...rep.detail.map((m) => [m.time, m.typeLabel, m.code, m.qty, m.note])
+  ]
+  if (rep.detail.length === 0) detailAoa.push(['（该时间段内没有流水记录）'])
+  const detailWs = XLSX.utils.aoa_to_sheet(detailAoa)
+  detailWs['!cols'] = [{ wch: 18 }, { wch: 10 }, { wch: 22 }, { wch: 8 }, { wch: 30 }]
+  XLSX.utils.book_append_sheet(wb, detailWs, '明细')
+
+  XLSX.writeFile(wb, outPath)
+  return { path: outPath }
 }
 
 // ---------- assignments + packaging ----------

@@ -1,6 +1,6 @@
 {
   "name": "machining-dispatch",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "加工件采购分发管理工具",
   "author": "txing",
   "main": "./out/main/index.js",

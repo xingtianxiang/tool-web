@@ -11,7 +11,8 @@ export default function Settings({ data, refresh, notify }) {
 
   async function changeDir() {
     try {
-      await api.chooseDataDir()
+      const result = await api.chooseDataDir()
+      if (result?.canceled) return
       await refresh()
       notify('数据文件夹已更新', 'success')
     } catch (error) {

@@ -38,17 +38,20 @@ async function zipToFile(zip, outPath) {
 }
 
 // files: [{ absPath, nameInZip }]   blobs: [{ buffer, nameInZip }]
+// 数据记录里有、磁盘上却找不到的图纸不能静默跳过 —— 返回 missing 让上层提示用户。
 export async function buildZip(outPath, files = [], blobs = []) {
   const zip = new JSZip()
+  const missing = []
   for (const f of files) {
-    if (f && f.absPath && fs.existsSync(f.absPath)) {
-      zip.file(f.nameInZip, fs.readFileSync(f.absPath))
-    }
+    if (!f || !f.absPath) continue
+    if (fs.existsSync(f.absPath)) zip.file(f.nameInZip, fs.readFileSync(f.absPath))
+    else missing.push(f.nameInZip)
   }
   for (const b of blobs) {
     if (b && b.buffer) zip.file(b.nameInZip, b.buffer)
   }
-  return zipToFile(zip, outPath)
+  const result = await zipToFile(zip, outPath)
+  return { ...result, missing }
 }
 
 function addDirToZip(zip, absDir, relBase) {

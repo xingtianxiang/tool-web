@@ -1,7 +1,30 @@
-import React, { useState } from 'react'
-import { ArrowRightLeft, Camera, ClipboardList, GripVertical, Inbox, MapPin, Package, Search, Trash2, Undo2, Warehouse as WarehouseIcon, X } from 'lucide-react'
+import React, { useEffect, useState } from 'react'
+import { ArrowRightLeft, Camera, ClipboardList, Download, FileSpreadsheet, GripVertical, Inbox, MapPin, Package, Search, Trash2, Undo2, Warehouse as WarehouseIcon, X } from 'lucide-react'
 import { api } from '../lib/api.js'
 import { Button, Field, Modal, TextInput, usePrompt } from '../ui.jsx'
+
+// 用料报表用的本地日历日 (YYYY-MM-DD)。movement.at 是 UTC,但界面选的是本地
+// 日期,所以这里一律按本地年月日取,和主进程 computeUsageReport 口径一致。
+function pad2(n) {
+  return String(n).padStart(2, '0')
+}
+function localDay(d) {
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
+}
+function todayStr() {
+  return localDay(new Date())
+}
+function firstOfMonthStr() {
+  const d = new Date()
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-01`
+}
+function lastMonthRange() {
+  const now = new Date()
+  const firstThis = new Date(now.getFullYear(), now.getMonth(), 1)
+  const lastPrev = new Date(firstThis.getTime() - 24 * 60 * 60 * 1000)
+  const firstPrev = new Date(lastPrev.getFullYear(), lastPrev.getMonth(), 1)
+  return { from: localDay(firstPrev), to: localDay(lastPrev) }
+}
 
 // StockModal handles the per-part row actions (分发 / 回库 / 盘点). 入库 has its
 // own drag-and-drop board (ReceiveBoard) below.
@@ -113,11 +136,13 @@ function ReceiveBoard({ data, refresh, notify }) {
     if (!staged.length) return notify('先把零件拖到「总仓库」或某个项目里', 'error')
     for (const r of staged) if (!(Number(r.qty) > 0)) return notify(`「${r.code}」数量要是正数`, 'error')
     setBusy(true)
+    let done = 0
     try {
       const photos = []
       for (const f of photoFiles) photos.push({ filename: f.name, bytes: new Uint8Array(await f.arrayBuffer()) })
       for (const r of staged) {
         await api.stockIn(r.componentId, { qty: Number(r.qty), projectId: r.target === 'pool' ? null : r.target, vendorId: vendorId || null, photos })
+        done++
       }
       notify(`已入库 ${staged.length} 项`, 'success')
       setStaged([])
@@ -125,7 +150,10 @@ function ReceiveBoard({ data, refresh, notify }) {
       setVendorId('')
       await refresh()
     } catch (error) {
-      notify(error.message, 'error')
+      // 中途失败:已入库的行从暂存区拿掉,只留下失败的及其之后的,避免重试时重复入库
+      setStaged((rows) => rows.slice(done))
+      notify(`前 ${done} 项已入库;「${staged[done].code}」失败:${error.message}。剩余行已保留,修正后再点确认入库`, 'error')
+      await refresh()
     } finally {
       setBusy(false)
     }
@@ -241,6 +269,32 @@ export default function Warehouse({ data, refresh, notify }) {
   const [gapProject, setGapProject] = useState(data.activeProjectId || '')
   const [promptUI, prompt] = usePrompt()
 
+  // 用料报表(按项目 + 时间段)
+  const [reportProject, setReportProject] = useState(data.activeProjectId || (data.projects[0] && data.projects[0].id) || '')
+  const [reportFrom, setReportFrom] = useState(firstOfMonthStr)
+  const [reportTo, setReportTo] = useState(todayStr)
+  const [report, setReport] = useState(null)
+  const [reportBusy, setReportBusy] = useState(false)
+  const [exporting, setExporting] = useState(false)
+
+  // 报表数据来自主进程(要读全部流水,不能用屏幕上限 200 条的那份),项目/日期一变就重取。
+  useEffect(() => {
+    if (view !== 'report') return undefined
+    if (!reportProject) {
+      setReport(null)
+      return undefined
+    }
+    let cancelled = false
+    setReportBusy(true)
+    api
+      .projectUsageReport(reportProject, { from: reportFrom, to: reportTo })
+      .then((r) => { if (!cancelled) setReport(r) })
+      .catch((error) => { if (!cancelled) { setReport(null); notify(error.message, 'error') } })
+      .finally(() => { if (!cancelled) setReportBusy(false) })
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, reportProject, reportFrom, reportTo])
+
   const inv = data.inventory || { components: [], projects: [], movements: [] }
   const vendorName = (id) => (data.vendors.find((v) => v.id === id) || {}).name || ''
   const openStock = (action, component) => { setSeq((s) => s + 1); setStock({ action, component }) }
@@ -287,6 +341,21 @@ export default function Warehouse({ data, refresh, notify }) {
     api.openPath(data.dataDir + '\\' + String(ph.storedPath).split('/').join('\\'))
   }
 
+  async function exportReport() {
+    if (!reportProject) return notify('请先选择项目', 'error')
+    setExporting(true)
+    try {
+      const r = await api.exportUsageReport(reportProject, { from: reportFrom, to: reportTo })
+      if (r?.canceled) return
+      notify('用料报表已导出', 'success')
+      if (r?.path) api.reveal(r.path)
+    } catch (error) {
+      notify(error.message, 'error')
+    } finally {
+      setExporting(false)
+    }
+  }
+
   const gaps = inv.projects.find((p) => p.id === gapProject) || inv.projects[0] || null
 
   return (
@@ -297,6 +366,7 @@ export default function Warehouse({ data, refresh, notify }) {
           <button className={seg('stock')} onClick={() => setView('stock')}><Package size={13} className="mr-1 inline" />库存总览 ({inv.components.length})</button>
           <button className={seg('gaps')} onClick={() => setView('gaps')}><ClipboardList size={13} className="mr-1 inline" />项目缺口</button>
           <button className={seg('log')} onClick={() => setView('log')}><WarehouseIcon size={13} className="mr-1 inline" />流水</button>
+          <button className={seg('report')} onClick={() => setView('report')}><FileSpreadsheet size={13} className="mr-1 inline" />用料报表</button>
         </div>
       </div>
 
@@ -445,6 +515,91 @@ export default function Warehouse({ data, refresh, notify }) {
             </div>
           )
         )}
+
+        {/* ---- 用料报表 ---- */}
+        {view === 'report' && (() => {
+          const rows = report ? report.rows : []
+          const invalidRange = reportFrom && reportTo && reportFrom > reportTo
+          const totals = rows.reduce(
+            (t, r) => ({ taken: t.taken + r.taken, returned: t.returned + r.returned, net: t.net + r.net }),
+            { taken: 0, returned: 0, net: 0 }
+          )
+          const setRange = (from, to) => { setReportFrom(from); setReportTo(to) }
+          return (
+            <div>
+              <div className="mb-3 flex flex-wrap items-end gap-3">
+                <label className="flex flex-col gap-1 text-xs muted-text">
+                  项目
+                  <select className="text-input w-auto" value={reportProject} onChange={(e) => setReportProject(e.target.value)}>
+                    {data.projects.map((p) => <option key={p.id} value={p.id}>{p.name}{p.status === 'archived' ? '（历史）' : ''}</option>)}
+                  </select>
+                </label>
+                <label className="flex flex-col gap-1 text-xs muted-text">
+                  从
+                  <input type="date" className="text-input w-auto" value={reportFrom} max={reportTo || undefined} onChange={(e) => setReportFrom(e.target.value)} />
+                </label>
+                <label className="flex flex-col gap-1 text-xs muted-text">
+                  到
+                  <input type="date" className="text-input w-auto" value={reportTo} min={reportFrom || undefined} onChange={(e) => setReportTo(e.target.value)} />
+                </label>
+                <div className="flex items-center gap-1">
+                  <Button variant="ghost" className="h-8 px-2 text-xs" onClick={() => setRange(firstOfMonthStr(), todayStr())}>本月</Button>
+                  <Button variant="ghost" className="h-8 px-2 text-xs" onClick={() => { const r = lastMonthRange(); setRange(r.from, r.to) }}>上月</Button>
+                  <Button variant="ghost" className="h-8 px-2 text-xs" onClick={() => setRange('', '')}>全部</Button>
+                </div>
+                <Button variant="primary" className="ml-auto" disabled={exporting || reportBusy || rows.length === 0} onClick={exportReport}>
+                  <Download size={15} /> {exporting ? '导出中…' : '导出 Excel'}
+                </Button>
+              </div>
+
+              {invalidRange && <div className="mb-2 text-xs text-[var(--geist-red-800)]">起始日期晚于结束日期，请调整。</div>}
+
+              {reportBusy ? (
+                <div className="mt-16 text-center text-sm faint-text">统计中…</div>
+              ) : rows.length === 0 ? (
+                <div className="mt-16 text-center text-sm faint-text">这个项目在所选时间段内没有领用或回库记录。</div>
+              ) : (
+                <div className="overflow-auto rounded-md border border-[var(--geist-gray-200)]">
+                  <table className="w-full text-left text-sm">
+                    <thead className="bg-[var(--geist-background-2)] text-xs text-[var(--geist-gray-900)]">
+                      <tr>
+                        <th className="px-3 py-2 font-medium">图号</th>
+                        <th className="px-3 py-2 font-medium">描述</th>
+                        <th className="px-3 py-2 font-medium">期间领用</th>
+                        <th className="px-3 py-2 font-medium">期间回库</th>
+                        <th className="px-3 py-2 font-medium">净用料</th>
+                        <th className="px-3 py-2 font-medium">单位</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((r) => (
+                        <tr key={r.componentId} className="border-t border-[var(--geist-gray-100)]">
+                          <td className="px-3 py-2 font-medium text-[var(--geist-primary)]">{r.code}</td>
+                          <td className="px-3 py-2 text-xs muted-text">{r.description || '—'}</td>
+                          <td className="px-3 py-2">{r.taken}</td>
+                          <td className="px-3 py-2">{r.returned ? r.returned : <span className="faint-text">0</span>}</td>
+                          <td className="px-3 py-2 font-semibold">{r.net}</td>
+                          <td className="px-3 py-2 text-xs muted-text">个</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t border-[var(--geist-gray-200)] bg-[var(--geist-background-2)] font-medium">
+                        <td className="px-3 py-2" colSpan={2}>合计（{rows.length} 项）</td>
+                        <td className="px-3 py-2">{totals.taken}</td>
+                        <td className="px-3 py-2">{totals.returned}</td>
+                        <td className="px-3 py-2">{totals.net}</td>
+                        <td className="px-3 py-2 text-xs muted-text">个</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              )}
+
+              <div className="mt-2 text-xs faint-text">领用 = 从公共库存分发到本项目 + 直达入库到本项目；盘点不计入。导出的 Excel 另含「明细」页（逐条流水）。</div>
+            </div>
+          )
+        })()}
       </div>
 
       {stock && <StockModal key={seq} stock={stock} data={data} onClose={() => setStock(null)} onDone={refresh} notify={notify} />}

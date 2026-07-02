@@ -296,6 +296,53 @@ function createPreviewApi() {
     return { components: comps, projects: projectNeeds, movements }
   }
 
+  // ----- usage report (mirrors src/main/store.js computeUsageReport) -----
+  function localDateStrMock(iso) {
+    const d = new Date(iso)
+    const p = (n) => String(n).padStart(2, '0')
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+  }
+  function localDateTimeStrMock(iso) {
+    const d = new Date(iso)
+    const p = (n) => String(n).padStart(2, '0')
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+  }
+  const USAGE_TYPE_LABEL_MOCK = { out: '领用', in: '直达入库', return: '回库' }
+  function usageReportMock(projectId, { from = '', to = '' } = {}) {
+    const project = data.projects.find((p) => p.id === projectId)
+    if (!project) throw new Error('项目不存在')
+    const cmap = compMap()
+    const inRange = (iso) => {
+      const ds = localDateStrMock(iso)
+      if (from && ds < from) return false
+      if (to && ds > to) return false
+      return true
+    }
+    const byComp = new Map()
+    const detail = []
+    for (const m of data.movements) {
+      if (m.projectId !== projectId) continue
+      if (m.type === 'adjust') continue
+      const isTake = m.type === 'out' || m.type === 'in'
+      const isReturn = m.type === 'return'
+      if (!isTake && !isReturn) continue
+      if (!inRange(m.at)) continue
+      const rec = byComp.get(m.componentId) || { taken: 0, returned: 0 }
+      if (isTake) rec.taken += m.qty
+      else rec.returned += m.qty
+      byComp.set(m.componentId, rec)
+      const comp = cmap.get(m.componentId)
+      detail.push({ at: m.at, time: localDateTimeStrMock(m.at), type: m.type, typeLabel: USAGE_TYPE_LABEL_MOCK[m.type] || m.type, code: comp ? comp.code : '(已删除)', qty: m.qty, note: m.note || '' })
+    }
+    const rows = [...byComp.entries()].map(([componentId, rec]) => {
+      const comp = cmap.get(componentId)
+      return { componentId, code: comp ? comp.code : '(已删除)', description: comp ? comp.description || '' : '', taken: rec.taken, returned: rec.returned, net: rec.taken - rec.returned }
+    })
+    rows.sort((a, b) => b.net - a.net || a.code.localeCompare(b.code))
+    detail.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0))
+    return { project: { id: project.id, name: project.name, status: project.status }, from, to, rows, detail }
+  }
+
   return {
     async getState() {
       return clone(state())
@@ -645,6 +692,12 @@ function createPreviewApi() {
     async deleteMovement(id) {
       data.movements = data.movements.filter((m) => m.id !== id)
       return computeInventoryMock()
+    },
+    async projectUsageReport(projectId, range = {}) {
+      return clone(usageReportMock(projectId, range))
+    },
+    async exportUsageReport() {
+      return { path: `${data.dataDir}\\用料报表.xlsx` }
     },
     async reveal() {
       return true

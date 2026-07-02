@@ -132,6 +132,16 @@ export default function PackageDialog({ vendorId, onClose, notify, refresh }) {
             已打包 {result.count} 个组合件 / {result.fileCount} 个图纸文件 + 需求单
             {result.missing > 0 && <span className="text-[#aa4d00]">（另有 {result.missing} 个无图纸组合件被跳过）</span>}
           </div>
+          {(result.missingFiles?.length || 0) > 0 && (
+            <div className="w-full rounded-md border border-[var(--geist-red-800)] bg-[var(--geist-red-100)] px-3 py-2 text-left text-xs text-[var(--geist-red-800)]">
+              <div className="mb-1 flex items-center gap-1 font-medium">
+                <AlertTriangle size={13} /> 有 {result.missingFiles.length} 个图纸在磁盘上没找到,没有打进压缩包,请先检查再发:
+              </div>
+              {result.missingFiles.map((f) => (
+                <div key={f} className="truncate">{f}</div>
+              ))}
+            </div>
+          )}
           <div className="break-all rounded-md border border-[var(--geist-gray-200)] bg-[var(--geist-background-2)] px-3 py-2 font-mono text-xs muted-text">{result.zipPath}</div>
           <div className="mt-1 text-xs faint-text">接下来打开文件夹，把这个 zip 发给厂商即可。</div>
           <div className="flex gap-2">
